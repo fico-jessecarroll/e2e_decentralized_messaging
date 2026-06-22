@@ -1,0 +1,9 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+description = "Message envelopes, prekey management, protobuf-generated types"
+
+[lib]
+name = "protocol"
+path = "src/lib.rs"

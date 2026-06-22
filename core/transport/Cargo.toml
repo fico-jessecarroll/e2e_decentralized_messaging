@@ -1,0 +1,9 @@
+[package]
+name = "transport"
+version.workspace = true
+edition.workspace = true
+description = "libp2p-based DHT discovery, relay client, message delivery"
+
+[lib]
+name = "transport"
+path = "src/lib.rs"

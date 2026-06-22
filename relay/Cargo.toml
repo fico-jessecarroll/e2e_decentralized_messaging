@@ -1,0 +1,9 @@
+[package]
+name = "relay"
+version.workspace = true
+edition.workspace = true
+description = "Standalone, self-hostable blind store-and-forward relay node"
+
+[[bin]]
+name = "relay"
+path = "src/main.rs"
