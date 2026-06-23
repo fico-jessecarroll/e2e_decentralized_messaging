@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package messenger.protocol.v0;
+
+option go_package = "example.com/messenger/protocol/v0";
+
+import "v0/envelope.proto";
+
+// The structure of the data libsignal's sealed-sender encryption wraps.
+// This message is never observed on the wire in plaintext form — the
+// encrypted bytes are what travels as Envelope.ciphertext when
+// Envelope.sender is unset. It is specified here so the *shape* of what is
+// hidden from relays/DHT peers is explicit, even though our wire format
+// never sees it unencrypted (docs/threat-model.md §4.1 "Sealed Sender
+// caveat").
+message SealedSenderContent {
+  // The real sender, hidden from every relay/DHT peer that handles the
+  // envelope. Only the recipient, after decrypting, ever sees this.
+  DeviceAddress sender = 1;
+
+  // A short-lived certificate binding `sender`'s identity key to this
+  // device address, self-signed by that device's own identity key. There
+  // is no central CA in this design (PLAN.md §3 — self-sovereign keys, no
+  // central directory); see spec/v0.md §5 for why a self-signed cert is
+  // sufficient here rather than a gap.
+  bytes sender_certificate = 2;
+
+  // The real Signal Protocol ciphertext (PreKeySignalMessage,
+  // SignalMessage, or SenderKeyMessage bytes) — identical in shape to
+  // Envelope.ciphertext for an unsealed message of the corresponding type.
+  bytes inner_ciphertext = 3;
+
+  EnvelopeType inner_type = 4;
+}

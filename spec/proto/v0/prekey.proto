@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package messenger.protocol.v0;
+
+option go_package = "example.com/messenger/protocol/v0";
+
+import "v0/envelope.proto";
+
+// A signed prekey, rotated periodically by its owning device. Used as the
+// medium-term DH component of X3DH/PQXDH session setup.
+message SignedPreKey {
+  uint32 id = 1;
+  bytes public_key = 2;
+  // XEdDSA signature over `public_key`, by the device's identity key.
+  bytes signature = 3;
+}
+
+// A one-time prekey. Consumed on first use; a device replenishes its pool
+// asynchronously (PLAN.md §3). An exhausted pool is not fatal — X3DH falls
+// back to signed-prekey-only setup at reduced forward secrecy for that one
+// session. A client MUST surface that as a degraded-trust state rather than
+// treating it as equivalent to having a one-time prekey.
+message OneTimePreKey {
+  uint32 id = 1;
+  bytes public_key = 2;
+}
+
+// Optional post-quantum KEM prekey (PQXDH), included only if the pinned
+// libsignal build for both peers supports it. A client MUST treat the
+// absence of this field as "peer X3DH only," not as an error.
+message PqPreKey {
+  uint32 id = 1;
+  bytes public_key = 2;
+  bytes signature = 3;
+}
+
+// The full bundle a sender fetches (via DHT or out-of-band invite) to start
+// a session with an offline recipient device.
+message PreKeyBundle {
+  uint32 bundle_version = 1;
+
+  DeviceAddress device = 2;
+
+  // Long-term identity public key. The sender MUST verify
+  // `signed_pre_key.signature` and `pq_pre_key.signature` (if present)
+  // against this key before using the bundle — bundles fetched via the DHT
+  // are an untrusted hint until verified (docs/threat-model.md §4.6).
+  bytes identity_key = 3;
+
+  SignedPreKey signed_pre_key = 4;
+
+  // Zero or more. Empty means the recipient's one-time prekey pool is
+  // exhausted; see OneTimePreKey doc comment above.
+  repeated OneTimePreKey one_time_pre_keys = 5;
+
+  PqPreKey pq_pre_key = 6;
+
+  // Unix seconds after which this bundle should be treated as stale and
+  // re-fetched, even if no replacement has been published yet.
+  uint64 expires_at_unix = 7;
+}
+
+// The record published to the DHT under a user-chosen handle (PLAN.md §3).
+// Wraps one PreKeyBundle per linked device, since lookup is by account
+// handle but sessions are established per-device.
+message DiscoveryRecord {
+  string handle = 1;
+  repeated PreKeyBundle device_bundles = 2;
+  // Signature over the serialized `device_bundles` by the primary device's
+  // identity key, so a malicious DHT peer cannot splice in a rogue device's
+  // bundle without invalidating this signature. This guards against
+  // third-party DHT tampering specifically — it does not defend against the
+  // "Compromised primary device" adversary in docs/threat-model.md §2, which
+  // by definition already holds this signing key.
+  bytes primary_signature = 3;
+}
