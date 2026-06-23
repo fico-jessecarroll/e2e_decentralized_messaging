@@ -1,0 +1,9 @@
+[package]
+name = "storage"
+version.workspace = true
+edition.workspace = true
+description = "SQLCipher-backed key/session/message store, backup export/import"
+
+[lib]
+name = "storage"
+path = "src/lib.rs"
