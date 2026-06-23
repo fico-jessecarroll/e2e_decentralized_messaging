@@ -9,4 +9,17 @@ name = "transport"
 path = "src/lib.rs"
 
 [dependencies]
-libp2p.workspace = true
+# Feature selection made by this story (libp2p stack with Noise + QUIC/TCP), per the note in
+# docs/dependency-versions.md deferring feature/runtime choice to this Phase 3 story:
+# - tcp + noise + yamux: TCP transport with Noise handshake encryption and Yamux multiplexing.
+# - quic: QUIC transport (carries its own TLS-based encryption; not layered with Noise — see
+#   core/transport/src/lib.rs module docs).
+# - tokio: async runtime, the de facto standard for rust-libp2p and what quinn (QUIC) expects.
+# - macros: `#[derive(NetworkBehaviour)]`.
+# - ping: minimal behaviour used to prove a usable, bidirectional encrypted session end-to-end.
+libp2p = { workspace = true, features = ["tcp", "quic", "noise", "yamux", "tokio", "macros", "ping"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+futures = "0.3"
+futures_ringbuf = "0.4"
