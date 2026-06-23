@@ -14,3 +14,11 @@ members = [
 version = "0.1.0"
 edition = "2021"
 # License is an open decision (PLAN.md §10 — libsignal is AGPLv3); not set until confirmed.
+
+# Pinned per docs/dependency-versions.md (PLAN.md Phase 0). Feature/runtime selection for
+# libp2p is deferred to the Phase 3 "Transport (online)" story; this pins the exact version only.
+[workspace.dependencies]
+# rev is the exact commit tag v0.96.2 resolved to. Pinned by rev (not tag) because tags are
+# mutable on the upstream repo; a rev is immutable even without `cargo build --locked`.
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "38428a7bb70509910d72b3f78208c1daf33774d8" }
+libp2p = "0.56.0"
