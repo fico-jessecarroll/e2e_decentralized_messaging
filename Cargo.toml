@@ -22,3 +22,9 @@ edition = "2021"
 # mutable on the upstream repo; a rev is immutable even without `cargo build --locked`.
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "38428a7bb70509910d72b3f78208c1daf33774d8" }
 libp2p = "0.56.0"
+
+# Pinned per docs/dependency-versions.md (Phase 2 "Storage" story). `bundled-sqlcipher-vendored-openssl`
+# statically links both SQLCipher and OpenSSL into the binary, so the encrypted-at-rest store has no
+# system SQLCipher/OpenSSL dependency to install on dev machines or CI runners.
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+zeroize = "1.9.0"
