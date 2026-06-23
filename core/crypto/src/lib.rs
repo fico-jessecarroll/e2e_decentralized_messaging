@@ -42,6 +42,113 @@ impl fmt::Display for SafetyNumberError {
 
 impl std::error::Error for SafetyNumberError {}
 
+/// Per-device identity keys and the primary-signed linking model (PLAN.md §4).
+///
+/// Each device already gets its own identity key for free — every call to
+/// [`generate_identity_key_pair`] produces an independent keypair, so a device simply generates
+/// one locally and never needs to see any other device's private key.
+///
+/// What's missing is the *link*: proof that a given device's identity key belongs to the same
+/// account as a trusted primary device. We build that on `libsignal`'s own alternate-identity
+/// signature (`IdentityKeyPair::sign_alternate_identity` / `IdentityKey::verify_alternate_identity`)
+/// — the exact primitive Signal uses to bind a PNI identity key to an ACI identity key under the
+/// same account. The semantics are exactly what we need ("this other identity key belongs to the
+/// same logical account as me"), domain-separation prefix included, so we reuse it unmodified
+/// rather than inventing a second signing scheme, per PLAN.md's "don't reinvent crypto" rule.
+/// Errors signing or verifying a device-identity link, or admitting a device into a [`DeviceSet`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceLinkError {
+    /// The underlying `libsignal` signing call failed. Unreachable in practice for the
+    /// Curve25519 keys this crate generates — the only key type it produces — but propagated
+    /// rather than panicking, per the project's fail-securely posture.
+    SigningFailed,
+    /// `signature` is missing, malformed, or was not produced by the claimed primary identity
+    /// key over this exact device identity key.
+    InvalidSignature,
+}
+
+impl fmt::Display for DeviceLinkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SigningFailed => write!(f, "device-identity signing failed"),
+            Self::InvalidSignature => write!(f, "invalid or missing device-identity signature"),
+        }
+    }
+}
+
+impl std::error::Error for DeviceLinkError {}
+
+/// Sign `device_identity_key` with the primary device's identity key, attesting that the device
+/// belongs to the same account as `primary`. Pass the result to [`DeviceSet::add_device`] (or
+/// [`verify_device_identity`] directly) to admit the device.
+pub fn sign_device_identity(
+    primary: &IdentityKeyPair,
+    device_identity_key: &IdentityKey,
+) -> Result<Box<[u8]>, DeviceLinkError> {
+    primary
+        .sign_alternate_identity(device_identity_key, &mut OsRng.unwrap_err())
+        .map_err(|_| DeviceLinkError::SigningFailed)
+}
+
+/// Verify that `signature` is a valid link from `primary_identity_key` to
+/// `device_identity_key`, i.e. that the primary device vouched for this device's identity key.
+///
+/// Fails closed: any malformed or mismatched signature returns `false` rather than propagating
+/// an error, so callers cannot accidentally treat a verification failure as anything but "not
+/// linked".
+pub fn verify_device_identity(
+    _primary_identity_key: &IdentityKey,
+    _device_identity_key: &IdentityKey,
+    _signature: &[u8],
+) -> bool {
+    todo!("TDD placeholder — tests must fail here first")
+}
+
+/// An account: a primary device's identity key plus the set of other devices' identity keys it
+/// has vouched for.
+///
+/// Admission is fail-closed — [`DeviceSet::add_device`] verifies the primary-signed link before
+/// inserting and leaves the set unchanged on any failure, so an unsigned or improperly signed
+/// device key can never appear in [`DeviceSet::linked_devices`].
+pub struct DeviceSet {
+    primary_identity_key: IdentityKey,
+    linked_devices: Vec<IdentityKey>,
+}
+
+impl DeviceSet {
+    /// Start a new account anchored to `primary_identity_key`.
+    pub fn new(primary_identity_key: IdentityKey) -> Self {
+        Self {
+            primary_identity_key,
+            linked_devices: Vec::new(),
+        }
+    }
+
+    /// The account's primary identity key.
+    pub fn primary_identity_key(&self) -> &IdentityKey {
+        &self.primary_identity_key
+    }
+
+    /// Admit `device_identity_key` if `signature` is a valid primary-signed link for it.
+    ///
+    /// Returns [`DeviceLinkError::InvalidSignature`] — and leaves the set unchanged — if the
+    /// signature is missing, malformed, or was not produced by this account's primary identity
+    /// key over this exact device identity key.
+    pub fn add_device(
+        &mut self,
+        _device_identity_key: IdentityKey,
+        _signature: &[u8],
+    ) -> Result<(), DeviceLinkError> {
+        todo!("TDD placeholder — tests must fail here first")
+    }
+
+    /// The devices admitted so far, in admission order. Does not include the primary device
+    /// itself — see [`DeviceSet::primary_identity_key`].
+    pub fn linked_devices(&self) -> &[IdentityKey] {
+        &self.linked_devices
+    }
+}
+
 /// Derive the 60-digit numeric safety number for a pair of identities, matching Signal's
 /// published fingerprint algorithm (version 1, 5200 iterations).
 ///
@@ -241,5 +348,178 @@ mod tests {
     #[test]
     fn keypair_type_is_reexported_for_downstream_crates() {
         let _identity: IdentityKeyPair = generate_identity_key_pair();
+    }
+}
+
+#[cfg(test)]
+mod device_link_tests {
+    use crate::{
+        generate_identity_key_pair, sign_device_identity, verify_device_identity, DeviceLinkError,
+        DeviceSet,
+    };
+
+    #[test]
+    fn verify_device_identity_accepts_a_valid_primary_signed_link() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+
+        let signature = sign_device_identity(&primary, device.identity_key()).expect("signs");
+
+        assert!(verify_device_identity(
+            primary.identity_key(),
+            device.identity_key(),
+            &signature,
+        ));
+    }
+
+    #[test]
+    fn sign_device_identity_is_randomized_across_calls() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+
+        let first = sign_device_identity(&primary, device.identity_key()).expect("signs");
+        let second = sign_device_identity(&primary, device.identity_key()).expect("signs");
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn verify_device_identity_rejects_an_empty_unsigned_signature() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+
+        assert!(!verify_device_identity(
+            primary.identity_key(),
+            device.identity_key(),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn verify_device_identity_rejects_a_signature_from_a_non_primary_key() {
+        let primary = generate_identity_key_pair();
+        let impostor = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+
+        // Signed by `impostor`, not the claimed `primary`.
+        let signature = sign_device_identity(&impostor, device.identity_key()).expect("signs");
+
+        assert!(!verify_device_identity(
+            primary.identity_key(),
+            device.identity_key(),
+            &signature,
+        ));
+    }
+
+    #[test]
+    fn verify_device_identity_rejects_a_signature_for_a_different_device_key() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+        let other_device = generate_identity_key_pair();
+
+        let signature = sign_device_identity(&primary, device.identity_key()).expect("signs");
+
+        // The signature was issued for `device`, not `other_device`.
+        assert!(!verify_device_identity(
+            primary.identity_key(),
+            other_device.identity_key(),
+            &signature,
+        ));
+    }
+
+    #[test]
+    fn verify_device_identity_rejects_truncated_signature_bytes() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+
+        let signature = sign_device_identity(&primary, device.identity_key()).expect("signs");
+
+        assert!(!verify_device_identity(
+            primary.identity_key(),
+            device.identity_key(),
+            &signature[..signature.len() - 1],
+        ));
+    }
+
+    #[test]
+    fn device_set_starts_with_no_linked_devices() {
+        let primary = generate_identity_key_pair();
+
+        let set = DeviceSet::new(*primary.identity_key());
+
+        assert!(set.linked_devices().is_empty());
+    }
+
+    #[test]
+    fn device_set_admits_a_validly_signed_device() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+        let signature = sign_device_identity(&primary, device.identity_key()).expect("signs");
+
+        let mut set = DeviceSet::new(*primary.identity_key());
+        set.add_device(*device.identity_key(), &signature)
+            .expect("valid link admits");
+
+        assert_eq!(set.linked_devices(), [*device.identity_key()]);
+    }
+
+    #[test]
+    fn device_set_admits_multiple_validly_signed_devices() {
+        let primary = generate_identity_key_pair();
+        let device_a = generate_identity_key_pair();
+        let device_b = generate_identity_key_pair();
+        let signature_a = sign_device_identity(&primary, device_a.identity_key()).expect("signs");
+        let signature_b = sign_device_identity(&primary, device_b.identity_key()).expect("signs");
+
+        let mut set = DeviceSet::new(*primary.identity_key());
+        set.add_device(*device_a.identity_key(), &signature_a)
+            .expect("valid link admits");
+        set.add_device(*device_b.identity_key(), &signature_b)
+            .expect("valid link admits");
+
+        assert_eq!(
+            set.linked_devices(),
+            [*device_a.identity_key(), *device_b.identity_key()]
+        );
+    }
+
+    #[test]
+    fn device_set_rejects_an_unsigned_device_key_and_leaves_the_set_unchanged() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+
+        let mut set = DeviceSet::new(*primary.identity_key());
+        let result = set.add_device(*device.identity_key(), &[]);
+
+        assert_eq!(result, Err(DeviceLinkError::InvalidSignature));
+        assert!(set.linked_devices().is_empty());
+    }
+
+    #[test]
+    fn device_set_rejects_a_device_signed_by_a_non_primary_key_and_leaves_the_set_unchanged() {
+        let primary = generate_identity_key_pair();
+        let impostor = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+        let signature = sign_device_identity(&impostor, device.identity_key()).expect("signs");
+
+        let mut set = DeviceSet::new(*primary.identity_key());
+        let result = set.add_device(*device.identity_key(), &signature);
+
+        assert_eq!(result, Err(DeviceLinkError::InvalidSignature));
+        assert!(set.linked_devices().is_empty());
+    }
+
+    #[test]
+    fn device_set_rejects_a_signature_replayed_for_a_different_device_key() {
+        let primary = generate_identity_key_pair();
+        let device = generate_identity_key_pair();
+        let other_device = generate_identity_key_pair();
+        let signature = sign_device_identity(&primary, device.identity_key()).expect("signs");
+
+        let mut set = DeviceSet::new(*primary.identity_key());
+        let result = set.add_device(*other_device.identity_key(), &signature);
+
+        assert_eq!(result, Err(DeviceLinkError::InvalidSignature));
+        assert!(set.linked_devices().is_empty());
     }
 }
