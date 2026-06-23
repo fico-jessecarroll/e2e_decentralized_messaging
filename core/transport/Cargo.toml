@@ -7,3 +7,6 @@ description = "libp2p-based DHT discovery, relay client, message delivery"
 [lib]
 name = "transport"
 path = "src/lib.rs"
+
+[dependencies]
+libp2p.workspace = true

@@ -7,3 +7,6 @@ description = "libsignal integration, identity, session, sender keys"
 [lib]
 name = "crypto"
 path = "src/lib.rs"
+
+[dependencies]
+libsignal-protocol.workspace = true
