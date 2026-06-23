@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "core/crypto",
+    "core/protocol",
+    "core/transport",
+    "core/storage",
+    "core/bindings/uniffi",
+    "core/bindings/wasm",
+    "relay",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# License is an open decision (PLAN.md §10 — libsignal is AGPLv3); not set until confirmed.

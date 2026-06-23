@@ -1,0 +1,9 @@
+[package]
+name = "uniffi-bindings"
+version.workspace = true
+edition.workspace = true
+description = "UniFFI bindings exposing the core to iOS/Android"
+
+[lib]
+name = "uniffi_bindings"
+path = "src/lib.rs"

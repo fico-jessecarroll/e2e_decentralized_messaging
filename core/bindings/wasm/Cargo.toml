@@ -1,0 +1,9 @@
+[package]
+name = "wasm-bindings"
+version.workspace = true
+edition.workspace = true
+description = "WASM bindings exposing the core to web clients"
+
+[lib]
+name = "wasm_bindings"
+path = "src/lib.rs"
