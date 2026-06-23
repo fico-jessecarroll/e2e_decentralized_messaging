@@ -25,3 +25,9 @@ libp2p = "0.56.0"
 # CSPRNG for identity keygen (core/crypto). Version aligned with the one libsignal-protocol
 # itself depends on (see Cargo.lock) so the RngCore bound IdentityKeyPair::generate expects matches.
 rand = "0.9"
+
+# Pinned per docs/dependency-versions.md (Phase 2 "Storage" story). `bundled-sqlcipher-vendored-openssl`
+# statically links both SQLCipher and OpenSSL into the binary, so the encrypted-at-rest store has no
+# system SQLCipher/OpenSSL dependency to install on dev machines or CI runners.
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+zeroize = "1.9.0"
