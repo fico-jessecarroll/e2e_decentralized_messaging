@@ -1,0 +1,9 @@
+[package]
+name = "crypto"
+version.workspace = true
+edition.workspace = true
+description = "libsignal integration, identity, session, sender keys"
+
+[lib]
+name = "crypto"
+path = "src/lib.rs"
