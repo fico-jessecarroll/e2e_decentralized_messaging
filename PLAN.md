@@ -197,7 +197,7 @@ Testing emphasis specific to this project:
 
 | Risk | Impact | Mitigation / decision needed |
 |---|---|---|
-| **`libsignal` is AGPLv3** | Affects licensing of the whole app and any forks. | Confirm AGPL is acceptable for the project's license (fine for open-source; blocks proprietary forks). Decide in Phase 0. |
+| **`libsignal` is AGPLv3** | Affects licensing of the whole app and any forks. | **Decided (Phase 0):** project adopts AGPLv3 project-wide. See `LICENSE` and `CONTRIBUTING.md` for the decision, the network-use obligation on the relay, and the flagged App Store distribution risk for the iOS client. |
 | **Spam/abuse without phone-number identity** | Open relays invite spam. | Proof-of-work on first contact + relay rate limiting (own story). |
 | **Web key storage weakness** | Lower security on web than mobile/desktop. | Documented reduced threat model + in-app warning; consider passkey/WebAuthn-bound storage. |
 | **Multi-device history sync** | Hard without a server. | v1 = per-device history + encrypted backup migration; full sync is a later epic. |
