@@ -1,8 +1,9 @@
-# Pinned dependency versions: libsignal & libp2p
+# Pinned dependency versions: libsignal, libp2p & rusqlite
 
-Phase 0 foundations decision (PLAN.md §6, row "Pin `libsignal`/`libp2p` versions"). This document
-records the exact versions pinned, why they were chosen, what crypto/transport capabilities they
-provide, and how the supply chain is protected against tampering.
+Phase 0 foundations decision (PLAN.md §6, row "Pin `libsignal`/`libp2p` versions"), extended in the
+Phase 2 "Storage" story to also cover `rusqlite`/SQLCipher. This document records the exact versions
+pinned, why they were chosen, what crypto/transport/storage capabilities they provide, and how the
+supply chain is protected against tampering.
 
 ## libsignal
 
@@ -41,6 +42,26 @@ This story pins the **version only**, with default features. Feature selection (
 architecture diagram) is deferred to the Phase 3 "Transport (online)" story, where the runtime/executor
 decision actually needs to be made. Pinning the version now is sufficient for `Cargo.lock` to record an
 exact, reproducible dependency graph for everything `libp2p` depends on.
+
+## rusqlite (SQLCipher)
+
+- **Crate:** `rusqlite`
+- **Source:** crates.io
+- **Pinned version:** `0.40.1`
+- **Feature:** `bundled-sqlcipher-vendored-openssl` — statically links a vendored SQLCipher amalgamation
+  *and* a vendored OpenSSL (libcrypto, for SQLCipher's cipher provider) into the binary. Chosen over
+  the plain `bundled-sqlcipher` feature (which links a vendored SQLCipher against the *system*
+  OpenSSL) so a dev machine or CI runner needs no system SQLCipher/OpenSSL install to build the
+  workspace — `cargo build --locked` is sufficient on a clean checkout.
+- **License:** MIT (`rusqlite`); SQLCipher's community edition is BSD-style with attribution and is
+  bundled, not separately downloaded, by the `libsqlite3-sys` build script.
+- **Consumed by:** `core/storage` (`core/storage/Cargo.toml`), implementing PLAN.md §2/§6's
+  "Storage (SQLCipher) ... encrypted at rest" layer.
+- **Why a raw key, not a passphrase:** `core/storage` passes SQLCipher a raw 256-bit key via the
+  `PRAGMA key = "x'<hex>'"` literal form rather than a passphrase. Key derivation (PBKDF2/Argon2 from
+  a user secret) is a separate concern owned by whatever caller constructs the key; `rusqlite`/SQLCipher
+  here only consumes already-strong key material, so there's no redundant/weaker KDF pass inside the
+  store itself.
 
 ## How the pin is enforced
 
