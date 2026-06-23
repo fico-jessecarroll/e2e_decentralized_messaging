@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package messenger.protocol.v0;
+
+option go_package = "example.com/messenger/protocol/v0";
+
+// A device address: an identity-key fingerprint plus a per-account device id.
+// Sessions, Sender Keys, and Sealed Sender are all scoped per device, not
+// per account (PLAN.md §4 "Multi-Device & Sync").
+message DeviceAddress {
+  // SHA-256 fingerprint of the device's long-term Curve25519/Ed25519
+  // identity public key. Always 32 bytes.
+  bytes identity_fingerprint = 1;
+  // Per-account device id, assigned at link time. 0 is reserved for the
+  // primary device.
+  uint32 device_id = 2;
+}
+
+enum EnvelopeType {
+  ENVELOPE_TYPE_UNSPECIFIED = 0;
+  // ciphertext is a serialized libsignal PreKeySignalMessage — the first
+  // message of a new X3DH/PQXDH session.
+  ENVELOPE_TYPE_PREKEY_MESSAGE = 1;
+  // ciphertext is a serialized libsignal SignalMessage — a Double Ratchet
+  // message in an already-established 1:1 session.
+  ENVELOPE_TYPE_CIPHERTEXT_MESSAGE = 2;
+  // ciphertext is a serialized libsignal SenderKeyMessage — a group message
+  // under an established Sender Key session.
+  ENVELOPE_TYPE_SENDER_KEY_MESSAGE = 3;
+  // ciphertext is a serialized libsignal SenderKeyDistributionMessage —
+  // distributes or rotates a Sender Key to a group member.
+  ENVELOPE_TYPE_SENDER_KEY_DISTRIBUTION = 4;
+  // Delivery/read receipt. `ciphertext` is still Double-Ratchet-encrypted
+  // using the recipient's existing 1:1 session, so receipts don't leak more
+  // metadata than any other envelope of this shape.
+  ENVELOPE_TYPE_RECEIPT = 5;
+}
+
+// The outer envelope carried over the wire between a sender, the transport
+// (direct P2P or a relay), and a recipient. This is the "Protocol layer"
+// described in docs/threat-model.md §4.2: deliberately thin, and it carries
+// Signal Protocol ciphertext as an opaque blob rather than reimplementing or
+// inspecting X3DH/Double Ratchet/Sender Keys framing.
+message Envelope {
+  // Wire-format version of this Envelope message itself — distinct from the
+  // Signal Protocol session/ciphertext version inside `ciphertext`. See
+  // spec/v0.md §3 for the versioning policy.
+  uint32 version = 1;
+
+  EnvelopeType type = 2;
+
+  // Routing hint only — NOT authenticated by Sealed Sender, and not present
+  // for ENVELOPE_TYPE_SENDER_KEY_DISTRIBUTION fan-out (membership is carried
+  // out-of-band by the transport layer for that case).
+  DeviceAddress recipient = 3;
+
+  // Sender's device address in plaintext. MUST be left unset for
+  // ENVELOPE_TYPE_PREKEY_MESSAGE, ENVELOPE_TYPE_CIPHERTEXT_MESSAGE, and
+  // ENVELOPE_TYPE_SENDER_KEY_MESSAGE — for those, sender identity travels
+  // only inside the Sealed Sender wrapper (sealed_sender.proto). It MAY be
+  // set for ENVELOPE_TYPE_SENDER_KEY_DISTRIBUTION and
+  // ENVELOPE_TYPE_RECEIPT, where group membership or session establishment
+  // already discloses the participants.
+  DeviceAddress sender = 4;
+
+  // Opaque libsignal-serialized ciphertext, or a Sealed Sender wrapper
+  // (sealed_sender.proto SealedSenderContent, itself libsignal-encrypted).
+  // This layer never parses or re-encodes it; it is passed through
+  // byte-for-byte by relays and DHT peers.
+  bytes ciphertext = 5;
+
+  // Sender-set send time, milliseconds since Unix epoch. Relays MAY use
+  // this for TTL/expiry bookkeeping. It is not authenticated — do not treat
+  // it as a security-relevant timestamp.
+  uint64 timestamp_ms = 6;
+
+  // Opaque group identifier, set only for ENVELOPE_TYPE_SENDER_KEY_MESSAGE
+  // and ENVELOPE_TYPE_SENDER_KEY_DISTRIBUTION. 16 bytes, randomly generated
+  // at group creation.
+  bytes group_id = 7;
+}
