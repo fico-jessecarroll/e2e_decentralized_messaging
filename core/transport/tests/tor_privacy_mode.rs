@@ -1,3 +1,4 @@
+use transport::build_swarm_with_privacy;
 use transport::privacy::{verify_tor_available, TransportPrivacyConfig, TorUnavailable};
 
 #[test]
@@ -59,4 +60,48 @@ fn enabling_tor_with_a_reachable_proxy_succeeds() {
         tor_socks_addr: addr,
     };
     assert!(verify_tor_available(&config).is_ok());
+}
+
+// ── System-level fail-closed gate ─────────────────────────────────────────────
+
+#[test]
+fn build_swarm_with_privacy_fails_closed_when_tor_enabled_and_proxy_unreachable() {
+    // Port 19050 is chosen to be unpopulated on CI / dev machines; the swarm
+    // must not be built — a clearnet swarm must never be returned when the
+    // caller requested Tor.
+    let keypair = libp2p::identity::Keypair::generate_ed25519();
+    let config = TransportPrivacyConfig {
+        tor_enabled: true,
+        tor_socks_addr: "127.0.0.1:19050".to_string(),
+    };
+    let result = build_swarm_with_privacy(keypair, &config);
+    assert!(
+        result.is_err(),
+        "build_swarm_with_privacy must not produce a swarm when Tor is unavailable"
+    );
+}
+
+#[test]
+fn build_swarm_with_privacy_fails_closed_when_tor_enabled_and_address_unparseable() {
+    let keypair = libp2p::identity::Keypair::generate_ed25519();
+    let config = TransportPrivacyConfig {
+        tor_enabled: true,
+        tor_socks_addr: "not-a-valid-addr".to_string(),
+    };
+    let result = build_swarm_with_privacy(keypair, &config);
+    assert!(
+        result.is_err(),
+        "build_swarm_with_privacy must not produce a swarm when Tor proxy address is unparseable"
+    );
+}
+
+#[test]
+fn build_swarm_with_privacy_builds_clearnet_swarm_when_tor_disabled() {
+    let keypair = libp2p::identity::Keypair::generate_ed25519();
+    let config = TransportPrivacyConfig::default(); // tor_enabled = false
+    let result = build_swarm_with_privacy(keypair, &config);
+    assert!(
+        result.is_ok(),
+        "build_swarm_with_privacy must succeed when Tor is disabled"
+    );
 }
