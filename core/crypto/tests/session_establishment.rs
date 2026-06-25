@@ -6,8 +6,8 @@ use libsignal_protocol::{
     SessionUsabilityRequirements, SignalProtocolError, SignedPreKeyId, SignedPreKeyStore,
     Timestamp,
 };
-use rand::TryRngCore as _;
 use rand::rngs::OsRng;
+use rand::TryRngCore as _;
 
 fn now_ts() -> Timestamp {
     Timestamp::from_epoch_millis(
@@ -49,11 +49,20 @@ async fn make_party(name: &str, device_id: u8) -> Party {
         .save_kyber_pre_key(KyberPreKeyId::from(1u32), &kyber_prekey)
         .await
         .unwrap();
-    store.save_pre_key(PreKeyId::from(1u32), otpk).await.unwrap();
+    store
+        .save_pre_key(PreKeyId::from(1u32), otpk)
+        .await
+        .unwrap();
 
-    let bundle =
-        build_prekey_bundle(42, did, &identity, &signed_prekey, &kyber_prekey, Some(otpk))
-            .unwrap();
+    let bundle = build_prekey_bundle(
+        42,
+        did,
+        &identity,
+        &signed_prekey,
+        &kyber_prekey,
+        Some(otpk),
+    )
+    .unwrap();
 
     Party {
         store,
@@ -231,10 +240,8 @@ async fn bundle_with_different_identity_key_is_rejected_after_tofu() {
     .expect("first TOFU session");
 
     // Present imposter's bundle at Alice's address — must be rejected.
-    let imposter_at_alice_addr = ProtocolAddress::new(
-        alice.address.name().to_string(),
-        alice.address.device_id(),
-    );
+    let imposter_at_alice_addr =
+        ProtocolAddress::new(alice.address.name().to_string(), alice.address.device_id());
     let result = establish_outbound_session(
         &bob.address,
         &imposter_at_alice_addr,
@@ -261,8 +268,15 @@ fn build_prekey_bundle_without_one_time_prekey_succeeds() {
     let kyber_prekey =
         generate_kyber_prekey(KyberPreKeyId::from(1u32), identity.private_key()).unwrap();
 
-    build_prekey_bundle(42, device(1), &identity, &signed_prekey, &kyber_prekey, None)
-        .expect("bundle without OTC prekey must be valid");
+    build_prekey_bundle(
+        42,
+        device(1),
+        &identity,
+        &signed_prekey,
+        &kyber_prekey,
+        None,
+    )
+    .expect("bundle without OTC prekey must be valid");
 }
 
 #[test]

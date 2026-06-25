@@ -8,11 +8,9 @@
 //! session-establishment step so callers don't have to reach into the underlying crate directly.
 
 use libsignal_protocol::{
-    kem, GenericSignedPreKey, IdentityKeyPair, KyberPreKeyId, KyberPreKeyRecord, PreKeyBundle,
-    PreKeyRecord, ProtocolAddress, SessionStore,
+    kem, process_prekey_bundle, GenericSignedPreKey, IdentityKeyPair, IdentityKeyStore,
+    KyberPreKeyId, KyberPreKeyRecord, PreKeyBundle, PreKeyRecord, ProtocolAddress, SessionStore,
     SignalProtocolError, SignedPreKeyRecord,
-    IdentityKeyStore,
-    process_prekey_bundle,
 };
 use rand::{CryptoRng, Rng};
 use std::time::SystemTime;
@@ -90,4 +88,3 @@ pub async fn establish_outbound_session<R: Rng + CryptoRng>(
     )
     .await
 }
-
