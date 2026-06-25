@@ -97,11 +97,13 @@ pub fn sign_device_identity(
 /// an error, so callers cannot accidentally treat a verification failure as anything but "not
 /// linked".
 pub fn verify_device_identity(
-    _primary_identity_key: &IdentityKey,
-    _device_identity_key: &IdentityKey,
-    _signature: &[u8],
+    primary_identity_key: &IdentityKey,
+    device_identity_key: &IdentityKey,
+    signature: &[u8],
 ) -> bool {
-    todo!("TDD placeholder — tests must fail here first")
+    primary_identity_key
+        .verify_alternate_identity(device_identity_key, signature)
+        .unwrap_or(false)
 }
 
 /// An account: a primary device's identity key plus the set of other devices' identity keys it
@@ -136,10 +138,14 @@ impl DeviceSet {
     /// key over this exact device identity key.
     pub fn add_device(
         &mut self,
-        _device_identity_key: IdentityKey,
-        _signature: &[u8],
+        device_identity_key: IdentityKey,
+        signature: &[u8],
     ) -> Result<(), DeviceLinkError> {
-        todo!("TDD placeholder — tests must fail here first")
+        if !verify_device_identity(&self.primary_identity_key, &device_identity_key, signature) {
+            return Err(DeviceLinkError::InvalidSignature);
+        }
+        self.linked_devices.push(device_identity_key);
+        Ok(())
     }
 
     /// The devices admitted so far, in admission order. Does not include the primary device
