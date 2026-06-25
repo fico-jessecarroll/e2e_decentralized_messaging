@@ -17,6 +17,8 @@
 //! Kademlia DHT, Circuit Relay, and GossipSub are out of scope here — each is its own
 //! downstream story (see the plan manifest) that builds on the [`Swarm`] this module produces.
 
+pub mod privacy;
+
 use libp2p::{identity::Keypair, noise, ping, swarm::Swarm, tcp, yamux, SwarmBuilder};
 
 /// Builds a [`Swarm`] for `keypair` with the TCP+Noise+Yamux and QUIC transports wired in.
