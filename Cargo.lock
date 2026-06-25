@@ -448,6 +448,7 @@ version = "0.1.0"
 dependencies = [
  "libsignal-protocol",
  "rand 0.9.4",
+ "tokio",
 ]
 
 [[package]]
