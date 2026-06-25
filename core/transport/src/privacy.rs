@@ -1,3 +1,9 @@
+//! Optional Tor transport mode (PLAN.md §10 "Metadata via DHT participation").
+//!
+//! Scope of this module: the secure-default/fail-closed gate around enabling Tor, and a
+//! [`Socks5TcpTransport`] that routes outbound libp2p dials through the local Tor daemon's SOCKS5
+//! proxy. See [`crate::build_swarm_with_privacy`] for the entry point.
+
 use std::io;
 use std::net::TcpStream;
 use std::pin::Pin;
@@ -13,11 +19,14 @@ use libp2p::multiaddr::Protocol;
 use tokio_socks::tcp::Socks5Stream;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-/// Controls whether outbound transport connections are routed through Tor.
-///
-/// Tor is opt-in and disabled by default — we must not silently proxy traffic.
-/// When enabled, `verify_tor_available` must be called at startup; if it fails,
-/// the caller must not build a swarm (fail-closed). See `build_swarm_with_privacy`.
+/// The standard local address for the Tor daemon's SOCKS5 proxy.
+pub const DEFAULT_TOR_SOCKS_ADDR: &str = "127.0.0.1:9050";
+
+const PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Transport-privacy configuration. `tor_enabled` defaults to `false`: clearnet is the default
+/// transport, and Tor is strictly opt-in (PLAN.md §8 "Secure defaults").
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportPrivacyConfig {
     pub tor_enabled: bool,
     pub tor_socks_addr: String,
@@ -27,47 +36,50 @@ impl Default for TransportPrivacyConfig {
     fn default() -> Self {
         Self {
             tor_enabled: false,
-            tor_socks_addr: "127.0.0.1:9050".to_string(),
+            tor_socks_addr: DEFAULT_TOR_SOCKS_ADDR.to_string(),
         }
     }
 }
 
+/// Tor was requested but is not usable. Callers must treat this as fail-closed: refuse to
+/// proceed rather than falling back to an unrequested clearnet path.
 #[derive(Debug, PartialEq)]
 pub enum TorUnavailable {
+    /// `tor_socks_addr` does not parse as a socket address.
     InvalidProxyAddress(String),
+    /// The configured SOCKS proxy address did not accept a connection within the timeout.
     ProxyUnreachable(String),
 }
 
 impl std::fmt::Display for TorUnavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TorUnavailable::InvalidProxyAddress(addr) => {
-                write!(f, "invalid Tor proxy address: {}", addr)
+            Self::InvalidProxyAddress(addr) => {
+                write!(f, "invalid Tor SOCKS proxy address: {addr}")
             }
-            TorUnavailable::ProxyUnreachable(addr) => {
-                write!(f, "Tor proxy unreachable: {}", addr)
-            }
+            Self::ProxyUnreachable(addr) => write!(f, "Tor SOCKS proxy unreachable at {addr}"),
         }
     }
 }
 
 impl std::error::Error for TorUnavailable {}
 
-/// Verifies that the Tor SOCKS proxy is reachable when Tor is enabled.
+/// Verify the configured Tor SOCKS proxy is reachable before any traffic relies on it.
 ///
-/// Returns `Ok(())` immediately when `tor_enabled` is false — no network I/O
-/// is performed. When enabled, parses the address (returning
-/// `InvalidProxyAddress` on failure) then attempts a short TCP connection
-/// (returning `ProxyUnreachable` on timeout or refusal).
+/// If `config.tor_enabled` is `false`, this is a no-op that always succeeds — Tor was never
+/// requested, so there is nothing to verify and no proxy is contacted. If `tor_enabled` is
+/// `true`, this returns `Err` unless a TCP connection to `tor_socks_addr` succeeds; callers must
+/// not proceed to build a clearnet swarm on `Err`, since that would silently defeat the user's
+/// opt-in choice.
 pub fn verify_tor_available(config: &TransportPrivacyConfig) -> Result<(), TorUnavailable> {
     if !config.tor_enabled {
         return Ok(());
     }
-    let addr: std::net::SocketAddr = config
+    let addr = config
         .tor_socks_addr
         .parse()
         .map_err(|_| TorUnavailable::InvalidProxyAddress(config.tor_socks_addr.clone()))?;
-    TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+    TcpStream::connect_timeout(&addr, PROXY_CONNECT_TIMEOUT)
         .map(|_| ())
         .map_err(|_| TorUnavailable::ProxyUnreachable(config.tor_socks_addr.clone()))
 }
@@ -77,13 +89,13 @@ pub fn verify_tor_available(config: &TransportPrivacyConfig) -> Result<(), TorUn
 type Socks5CompatStream =
     tokio_util::compat::Compat<tokio_socks::tcp::Socks5Stream<tokio::net::TcpStream>>;
 
-/// A libp2p [`Transport`] that dials all outbound connections through a SOCKS5
-/// proxy (e.g. a local Tor daemon). Inbound listening is not supported — Tor
-/// exit nodes handle inbound routing at a higher layer.
+/// A libp2p [`Transport`](libp2p::core::Transport) that dials all outbound connections through a
+/// SOCKS5 proxy (e.g. a local Tor daemon). Inbound listening is not supported — Tor exit nodes
+/// handle inbound routing at a higher layer.
 ///
-/// This transport is intentionally not exported as a standalone public API.
-/// Callers should use [`crate::build_swarm_with_privacy`] which enforces the
-/// fail-closed invariant before constructing the transport.
+/// This type is not exported as a standalone public API. Callers should use
+/// [`crate::build_swarm_with_privacy`] which enforces the fail-closed invariant before
+/// constructing this transport.
 pub(crate) struct Socks5TcpTransport {
     proxy_addr: String,
 }
@@ -99,11 +111,11 @@ fn multiaddr_to_tcp_target(addr: &Multiaddr) -> Option<String> {
     let proto1 = iter.next()?;
     let proto2 = iter.next()?;
     match (proto1, proto2) {
-        (Protocol::Ip4(ip), Protocol::Tcp(port)) => Some(format!("{}:{}", ip, port)),
-        (Protocol::Ip6(ip), Protocol::Tcp(port)) => Some(format!("[{}]:{}", ip, port)),
+        (Protocol::Ip4(ip), Protocol::Tcp(port)) => Some(format!("{ip}:{port}")),
+        (Protocol::Ip6(ip), Protocol::Tcp(port)) => Some(format!("[{ip}]:{port}")),
         (Protocol::Dns(host), Protocol::Tcp(port))
         | (Protocol::Dns4(host), Protocol::Tcp(port))
-        | (Protocol::Dns6(host), Protocol::Tcp(port)) => Some(format!("{}:{}", host, port)),
+        | (Protocol::Dns6(host), Protocol::Tcp(port)) => Some(format!("{host}:{port}")),
         _ => None,
     }
 }
@@ -150,5 +162,4 @@ impl libp2p::core::Transport for Socks5TcpTransport {
     ) -> Poll<TransportEvent<Self::ListenerUpgrade, Self::Error>> {
         Poll::Pending
     }
-
 }
