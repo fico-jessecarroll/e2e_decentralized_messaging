@@ -19,6 +19,8 @@
 
 use libp2p::{identity::Keypair, noise, ping, swarm::Swarm, tcp, yamux, SwarmBuilder};
 
+pub mod privacy;
+
 /// Builds a [`Swarm`] for `keypair` with the TCP+Noise+Yamux and QUIC transports wired in.
 ///
 /// The behaviour is the minimal [`ping::Behaviour`]: it proves that an established connection
