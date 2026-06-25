@@ -12,6 +12,8 @@ use libsignal_protocol::{Fingerprint, IdentityKey, IdentityKeyPair};
 use rand::rngs::OsRng;
 use rand::TryRngCore;
 
+pub mod prekey;
+
 /// Fingerprint version and iteration count Signal clients use for safety-number display
 /// (matches `libsignal`'s own published test vectors for version 1).
 const SAFETY_NUMBER_VERSION: u32 = 1;
