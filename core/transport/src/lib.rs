@@ -14,9 +14,11 @@
 //!   QUIC — QUIC's handshake already provides the equivalent property, and libp2p does not
 //!   support nesting a second security upgrade inside it.
 //!
-//! Kademlia DHT, Circuit Relay, and GossipSub are out of scope here — each is its own
-//! downstream story (see the plan manifest) that builds on the [`Swarm`] this module produces.
+//! Circuit Relay and GossipSub are out of scope here — each is its own downstream story (see the
+//! plan manifest) that builds on the [`Swarm`] this module produces. Kademlia DHT discovery lives
+//! in [`mod@dht`].
 
+pub mod dht;
 pub mod privacy;
 
 use libp2p::{

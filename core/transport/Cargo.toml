@@ -17,13 +17,18 @@ path = "src/lib.rs"
 # - tokio: async runtime, the de facto standard for rust-libp2p and what quinn (QUIC) expects.
 # - macros: `#[derive(NetworkBehaviour)]`.
 # - ping: minimal behaviour used to prove a usable, bidirectional encrypted session end-to-end.
-libp2p = { workspace = true, features = ["tcp", "quic", "noise", "yamux", "tokio", "macros", "ping"] }
+# - kad: Kademlia DHT used to publish and look up prekey bundles (this story).
+libp2p = { workspace = true, features = ["tcp", "quic", "noise", "yamux", "tokio", "macros", "ping", "kad"] }
 tokio = { version = "1", features = ["net"] }
 tokio-socks = "0.5"
 tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
+# Prekey-bundle types and signature verification reused for DHT records — no crypto reinvented here.
+crypto = { path = "../crypto" }
+libsignal-protocol.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 futures = "0.3"
 futures_ringbuf = "0.4"
+rand.workspace = true
