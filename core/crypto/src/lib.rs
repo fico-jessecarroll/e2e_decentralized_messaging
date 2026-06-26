@@ -12,6 +12,7 @@ use libsignal_protocol::{Fingerprint, IdentityKey, IdentityKeyPair};
 use rand::rngs::OsRng;
 use rand::TryRngCore;
 
+pub mod device_qr;
 pub mod prekey;
 pub mod session;
 
