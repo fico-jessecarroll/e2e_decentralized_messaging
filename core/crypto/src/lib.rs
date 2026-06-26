@@ -12,6 +12,7 @@ use libsignal_protocol::{Fingerprint, IdentityKey, IdentityKeyPair};
 use rand::rngs::OsRng;
 use rand::TryRngCore;
 
+pub mod device_qr;
 pub mod prekey;
 
 /// Fingerprint version and iteration count Signal clients use for safety-number display
