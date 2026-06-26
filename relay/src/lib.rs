@@ -9,12 +9,7 @@
 //! streams between peers without being able to read or modify the Signal Protocol
 //! E2E content.
 
-use libp2p::{
-    identity::Keypair,
-    noise, ping, relay,
-    swarm::Swarm,
-    tcp, yamux, SwarmBuilder,
-};
+use libp2p::{identity::Keypair, noise, ping, relay, swarm::Swarm, tcp, yamux, SwarmBuilder};
 
 /// Combined network behaviour for the relay node: Circuit Relay v2 server + ping liveness.
 #[derive(libp2p::swarm::NetworkBehaviour)]
