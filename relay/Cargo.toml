@@ -7,3 +7,17 @@ description = "Standalone, self-hostable blind store-and-forward relay node"
 [[bin]]
 name = "relay"
 path = "src/main.rs"
+
+[lib]
+name = "relay"
+path = "src/lib.rs"
+
+[dependencies]
+libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "tokio", "macros", "ping", "relay"] }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+futures = "0.3"
