@@ -11,13 +11,11 @@ use futures::StreamExt;
 use libp2p::{
     identity::Keypair,
     multiaddr::Protocol,
-    noise,
-    ping,
-    relay as lp_relay,
+    noise, ping, relay as lp_relay,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
-use relay::{RelayBehaviour, RelayBehaviourEvent, build_relay_swarm};
+use relay::{build_relay_swarm, RelayBehaviour, RelayBehaviourEvent};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,25 +122,24 @@ async fn relay_accepts_circuit_reservation() {
         .with(Protocol::P2pCircuit);
     client_a.listen_on(circuit_listen_addr).unwrap();
 
-    let reservation_accepted =
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                tokio::select! {
-                    event = relay_swarm.select_next_some() => {
-                        if let SwarmEvent::Behaviour(
-                            RelayBehaviourEvent::Relay(
-                                lp_relay::Event::ReservationReqAccepted { .. },
-                            ),
-                        ) = event
-                        {
-                            return true;
-                        }
+    let reservation_accepted = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::select! {
+                event = relay_swarm.select_next_some() => {
+                    if let SwarmEvent::Behaviour(
+                        RelayBehaviourEvent::Relay(
+                            lp_relay::Event::ReservationReqAccepted { .. },
+                        ),
+                    ) = event
+                    {
+                        return true;
                     }
-                    _ = client_a.select_next_some() => {}
                 }
+                _ = client_a.select_next_some() => {}
             }
-        })
-        .await;
+        }
+    })
+    .await;
 
     assert!(
         reservation_accepted.is_ok(),
@@ -181,11 +178,11 @@ async fn relay_rejects_unknown_peer_without_reservation() {
         loop {
             tokio::select! {
                 event = relay_swarm.select_next_some() => {
-                    match event {
-                        SwarmEvent::Behaviour(RelayBehaviourEvent::Relay(
-                            lp_relay::Event::CircuitReqDenied { .. },
-                        )) => return true,
-                        _ => {}
+                    if let SwarmEvent::Behaviour(RelayBehaviourEvent::Relay(
+                        lp_relay::Event::CircuitReqDenied { .. },
+                    )) = event
+                    {
+                        return true;
                     }
                 }
                 event = peer_b.select_next_some() => {
