@@ -13,6 +13,7 @@ use rand::rngs::OsRng;
 use rand::TryRngCore;
 
 pub mod device_qr;
+pub mod double_ratchet;
 pub mod prekey;
 pub mod session;
 
