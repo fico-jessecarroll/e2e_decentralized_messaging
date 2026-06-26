@@ -85,8 +85,8 @@ fn full_linking_flow() {
     assert_eq!(decoded_bytes, new_device_key_bytes.to_vec());
 
     // Reconstruct the IdentityKey from the decoded bytes.
-    let decoded_identity_key = IdentityKey::decode(&decoded_bytes)
-        .expect("decoded bytes must form a valid identity key");
+    let decoded_identity_key =
+        IdentityKey::decode(&decoded_bytes).expect("decoded bytes must form a valid identity key");
 
     // Both parties compute the safety number for out-of-band comparison.
     let primary_key_bytes = primary.identity_key().serialize();
@@ -101,5 +101,21 @@ fn full_linking_flow() {
     assert!(
         verify_device_identity(primary.identity_key(), &decoded_identity_key, &signature),
         "link must verify against the primary's identity key"
+    );
+}
+
+/// A malformed key (wrong length / not a valid identity key) must surface as
+/// `QrError::KeyError` rather than panicking.
+#[test]
+fn safety_number_for_display_rejects_malformed_key() {
+    let valid = generate_identity_key_pair();
+    let valid_key = valid.identity_key().serialize();
+    let malformed = [0u8; 10]; // too short to be a serialized identity key
+
+    let result = safety_number_for_display(&malformed, &valid_key);
+    assert!(
+        matches!(result, Err(QrError::KeyError(_))),
+        "expected KeyError, got {:?}",
+        result
     );
 }

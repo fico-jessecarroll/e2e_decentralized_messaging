@@ -58,8 +58,7 @@ pub fn encode_device_qr(identity_public_key_bytes: &[u8]) -> Result<String, QrEr
 
     // Verify the payload is QR-encodable. A 33-byte key yields a 66-char hex string,
     // which fits easily within QR error-correction level M capacity.
-    QrCode::new(hex_payload.as_bytes())
-        .map_err(|e| QrError::EncodeFailed(e.to_string()))?;
+    QrCode::new(hex_payload.as_bytes()).map_err(|e| QrError::EncodeFailed(e.to_string()))?;
 
     Ok(hex_payload)
 }
@@ -76,14 +75,14 @@ pub fn encode_device_qr(identity_public_key_bytes: &[u8]) -> Result<String, QrEr
 /// - the decoded byte length is not 33 (the serialized size of a
 ///   `libsignal_protocol::IdentityKey`).
 pub fn decode_device_qr(qr_payload: &str) -> Result<Vec<u8>, QrError> {
-    // Only lowercase hex digits are valid; reject everything else eagerly.
+    // Accept ASCII hex digits (upper- or lowercase); reject everything else eagerly.
     if !qr_payload.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(QrError::InvalidPayload(
             "payload contains non-hex characters".to_string(),
         ));
     }
 
-    if qr_payload.len() % 2 != 0 {
+    if !qr_payload.len().is_multiple_of(2) {
         return Err(QrError::InvalidPayload(
             "payload has odd length, not valid hex encoding".to_string(),
         ));
