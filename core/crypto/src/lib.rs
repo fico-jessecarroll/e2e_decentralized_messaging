@@ -14,6 +14,7 @@ use rand::TryRngCore;
 
 pub mod device_qr;
 pub mod prekey;
+pub mod session;
 
 /// Fingerprint version and iteration count Signal clients use for safety-number display
 /// (matches `libsignal`'s own published test vectors for version 1).

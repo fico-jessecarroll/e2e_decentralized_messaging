@@ -17,7 +17,17 @@
 //! Kademlia DHT, Circuit Relay, and GossipSub are out of scope here — each is its own
 //! downstream story (see the plan manifest) that builds on the [`Swarm`] this module produces.
 
-use libp2p::{identity::Keypair, noise, ping, swarm::Swarm, tcp, yamux, SwarmBuilder};
+pub mod privacy;
+
+use libp2p::{
+    core::{upgrade, Transport},
+    identity::Keypair,
+    noise, ping,
+    swarm::Swarm,
+    tcp, yamux, SwarmBuilder,
+};
+
+use privacy::{verify_tor_available, Socks5TcpTransport, TransportPrivacyConfig};
 
 /// Builds a [`Swarm`] for `keypair` with the TCP+Noise+Yamux and QUIC transports wired in.
 ///
@@ -38,5 +48,43 @@ pub fn build_swarm(
         .with_quic()
         .with_behaviour(|_key| ping::Behaviour::default())?
         .build();
+    Ok(swarm)
+}
+
+/// Builds a [`Swarm`] with the transport gated on `privacy`.
+///
+/// When `tor_enabled` is true:
+/// - [`verify_tor_available`] is called first; if Tor is unreachable the function
+///   returns `Err` immediately — **the swarm is never built** (fail-closed).
+/// - Outbound connections are routed through the configured SOCKS5 proxy so
+///   traffic does not leak onto clearnet.
+///
+/// When `tor_enabled` is false, this is equivalent to [`build_swarm`].
+pub fn build_swarm_with_privacy(
+    keypair: Keypair,
+    privacy: &TransportPrivacyConfig,
+) -> Result<Swarm<ping::Behaviour>, Box<dyn std::error::Error + Send + Sync>> {
+    if !privacy.tor_enabled {
+        return build_swarm(keypair);
+    }
+
+    // Fail closed: refuse to build a swarm if the SOCKS5 proxy is unreachable.
+    verify_tor_available(privacy)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+    let socks_addr = privacy.tor_socks_addr.clone();
+    let swarm = SwarmBuilder::with_existing_identity(keypair)
+        .with_tokio()
+        .with_other_transport(|key| {
+            let noise = noise::Config::new(key)?;
+            let tor_transport = Socks5TcpTransport::new(socks_addr.clone());
+            Ok(tor_transport
+                .upgrade(upgrade::Version::V1Lazy)
+                .authenticate(noise)
+                .multiplex(yamux::Config::default()))
+        })?
+        .with_behaviour(|_key| ping::Behaviour::default())?
+        .build();
+
     Ok(swarm)
 }
