@@ -145,8 +145,8 @@ impl libp2p::core::Transport for Socks5TcpTransport {
         _opts: DialOpts,
     ) -> Result<Self::Dial, TransportError<Self::Error>> {
         let proxy = self.proxy_addr.clone();
-        let target = multiaddr_to_tcp_target(&addr)
-            .ok_or(TransportError::MultiaddrNotSupported(addr))?;
+        let target =
+            multiaddr_to_tcp_target(&addr).ok_or(TransportError::MultiaddrNotSupported(addr))?;
 
         Ok(Box::pin(async move {
             let stream = Socks5Stream::connect(proxy.as_str(), target.as_str())

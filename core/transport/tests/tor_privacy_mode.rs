@@ -1,7 +1,7 @@
 use std::net::TcpListener;
 
 use transport::build_swarm_with_privacy;
-use transport::privacy::{verify_tor_available, TransportPrivacyConfig, TorUnavailable};
+use transport::privacy::{verify_tor_available, TorUnavailable, TransportPrivacyConfig};
 
 #[test]
 fn default_transport_privacy_config_disables_tor() {
