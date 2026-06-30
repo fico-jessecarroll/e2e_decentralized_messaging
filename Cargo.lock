@@ -551,6 +551,7 @@ dependencies = [
  "libsignal-protocol",
  "qrcode",
  "rand 0.9.4",
+ "sha2",
  "tokio",
 ]
 
