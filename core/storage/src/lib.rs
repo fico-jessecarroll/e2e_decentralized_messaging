@@ -58,6 +58,10 @@ pub enum StoreError {
     /// An underlying SQLite/SQLCipher error unrelated to key verification (e.g. the path's
     /// parent directory does not exist).
     Database(rusqlite::Error),
+    /// A typed value was present but could not be interpreted — a truncated row, a body whose
+    /// declared length does not match, or a value written bypassing the typed API. Fail-closed:
+    /// the caller gets an error rather than partial or default-constructed state.
+    Corrupted { reason: &'static str },
 }
 
 impl std::fmt::Display for StoreError {
@@ -65,6 +69,7 @@ impl std::fmt::Display for StoreError {
         match self {
             StoreError::InvalidKey => f.write_str("store key is invalid or the store is corrupted"),
             StoreError::Database(err) => write!(f, "store database error: {err}"),
+            StoreError::Corrupted { reason } => write!(f, "stored state is corrupted: {reason}"),
         }
     }
 }
@@ -118,6 +123,12 @@ impl Store {
              ON CONFLICT(id) DO NOTHING",
             [SCHEMA_VERSION],
         )?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS state (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL
+            );",
+        )?;
         Ok(())
     }
 
@@ -130,6 +141,107 @@ impl Store {
             })
             .map_err(StoreError::Database)
     }
+}
+
+/// A user-facing encrypted store keyed by a raw 32-byte key.
+///
+/// Wraps [`Store`] (and its zeroizing [`StoreKey`]) so callers that already hold a derived
+/// 256-bit key can open the store without constructing a [`StoreKey`] themselves — the raw key
+/// is wrapped in a [`StoreKey`] on open and zeroized on drop just the same. The database file
+/// (`store.db`) lives inside the supplied directory.
+#[derive(Debug)]
+pub struct EncryptedStore(Store);
+
+impl EncryptedStore {
+    /// Opens (creating if absent) the SQLCipher database at `<dir>/store.db` with `key`.
+    ///
+    /// Fails closed with [`StoreError::InvalidKey`] if `key` cannot decrypt an existing file —
+    /// key verification happens here, at open, not deferred to the first read.
+    pub fn open(dir: &Path, key: &[u8; 32]) -> Result<Self, StoreError> {
+        let db_path = dir.join("store.db");
+        Store::open(&db_path, &StoreKey::new(*key)).map(Self)
+    }
+
+    /// Persists the serialized identity keypair under the `identity` key.
+    ///
+    /// The value is stored in a length-prefixed envelope so loaders can distinguish a genuine
+    /// value from a row that was truncated or written bypassing this accessor.
+    pub fn put_identity(&self, serialized: &[u8]) -> Result<(), StoreError> {
+        self.put_typed(IDENTITY_KEY, serialized)
+    }
+
+    /// Loads the serialized identity keypair, or `Ok(None)` if none has been persisted.
+    ///
+    /// Fails closed with [`StoreError::Corrupted`] if a row exists but is not a valid envelope —
+    /// for example a value written by [`Self::put_raw`].
+    pub fn get_identity(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_typed(IDENTITY_KEY)
+    }
+
+    /// Writes `blob` verbatim to the row named `key`, with no envelope.
+    ///
+    /// Intended for tests that must inject a corrupt value beneath the typed API; production
+    /// callers should use the typed accessors so values are integrity-checked on load.
+    pub fn put_raw(&self, key: &str, blob: &[u8]) -> Result<(), StoreError> {
+        self.0.conn.execute(
+            "INSERT OR REPLACE INTO state (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, blob],
+        )?;
+        Ok(())
+    }
+
+    fn put_typed(&self, key: &str, value: &[u8]) -> Result<(), StoreError> {
+        let mut envelope = Vec::with_capacity(4 + value.len());
+        envelope.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        envelope.extend_from_slice(value);
+        self.0.conn.execute(
+            "INSERT OR REPLACE INTO state (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, envelope],
+        )?;
+        Ok(())
+    }
+
+    fn get_typed(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let row: Option<Vec<u8>> = self
+            .0
+            .conn
+            .query_row(
+                "SELECT value FROM state WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .or_else(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(StoreError::from(other)),
+            })?;
+        match row {
+            None => Ok(None),
+            Some(envelope) => Ok(Some(parse_envelope(&envelope)?)),
+        }
+    }
+}
+
+const IDENTITY_KEY: &str = "identity";
+
+/// Unwraps a length-prefixed envelope (`u32` big-endian length, then exactly that many body
+/// bytes) and returns the body. Fails closed with [`StoreError::Corrupted`] on any structural
+/// mismatch — a value shorter than the prefix, or a body whose length does not match the
+/// declared length.
+fn parse_envelope(envelope: &[u8]) -> Result<Vec<u8>, StoreError> {
+    if envelope.len() < 4 {
+        return Err(StoreError::Corrupted {
+            reason: "value shorter than length prefix",
+        });
+    }
+    let prefix: [u8; 4] = envelope[..4].try_into().unwrap();
+    let len = u32::from_be_bytes(prefix) as usize;
+    let body = &envelope[4..];
+    if body.len() != len {
+        return Err(StoreError::Corrupted {
+            reason: "declared length does not match stored body",
+        });
+    }
+    Ok(body.to_vec())
 }
 
 #[cfg(test)]
