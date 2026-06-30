@@ -8,7 +8,8 @@
 
 use std::fmt;
 
-use libsignal_protocol::{Fingerprint, IdentityKey, IdentityKeyPair};
+pub use libsignal_protocol::IdentityKeyPair;
+use libsignal_protocol::{Fingerprint, IdentityKey};
 use rand::rngs::OsRng;
 use rand::TryRngCore;
 
