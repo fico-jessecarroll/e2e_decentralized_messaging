@@ -11,6 +11,9 @@
 
 use libp2p::{identity::Keypair, noise, ping, relay, swarm::Swarm, tcp, yamux, SwarmBuilder};
 
+pub mod pow;
+pub mod ratelimit;
+
 /// Combined network behaviour for the relay node: Circuit Relay v2 server + ping liveness.
 #[derive(libp2p::swarm::NetworkBehaviour)]
 pub struct RelayBehaviour {

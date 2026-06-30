@@ -3021,6 +3021,8 @@ dependencies = [
  "clap",
  "futures",
  "libp2p",
+ "rand 0.9.4",
+ "sha2",
  "tokio",
  "tracing",
  "tracing-subscriber",

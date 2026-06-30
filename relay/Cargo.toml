@@ -18,6 +18,10 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+# CSPRNG for challenge nonces. A unique, unpredictable nonce per challenge is
+# what makes a solved proof-of-work non-replayable across challenges.
+rand = { workspace = true }
 
 [dev-dependencies]
 futures = "0.3"
