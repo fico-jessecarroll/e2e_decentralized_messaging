@@ -4,6 +4,8 @@
 //! SQLite database file and failing closed if the supplied key cannot decrypt an existing
 //! file. Key/session/message schemas and backup export/import are separate stories.
 
+pub mod backup;
+
 use std::path::Path;
 
 use rusqlite::Connection;
