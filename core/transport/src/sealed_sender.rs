@@ -97,6 +97,21 @@ pub enum SealedSenderError {
     DecryptionFailed,
 }
 
+impl std::fmt::Display for SealedSenderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed => write!(f, "sealed sender envelope is structurally malformed"),
+            Self::NotForRecipient => write!(
+                f,
+                "sealed sender envelope authenticated but inner frame is truncated"
+            ),
+            Self::DecryptionFailed => write!(f, "sealed sender envelope decryption failed"),
+        }
+    }
+}
+
+impl std::error::Error for SealedSenderError {}
+
 /// HKDF salt — a fixed domain-separation string so Sealed Sender keys can never be confused with
 /// keys derived for any other purpose from the same ECDH shared secret.
 const HKDF_SALT: &[u8] = b"SealedSender-v1";
@@ -130,12 +145,16 @@ pub fn seal(
     let mut nonce = [0u8; NONCE_LEN];
     rng.fill(&mut nonce);
 
-    // 2. Ephemeral-static ECDH: eph_priv × recipient_static_pub → shared secret.
+    // 2. Ephemeral-static ECDH: eph_priv × recipient_static_pub → shared secret. Both operands
+    //    are always valid Curve25519 points here (a freshly generated ephemeral key and a
+    //    `recipient_pub` the caller already holds an `IdentityKey` for), so this is effectively
+    //    unreachable in practice; `Malformed` is the honest label if it ever were to happen —
+    //    "decryption" hasn't been attempted yet at this point in `seal`.
     let recipient_static_pub = recipient_pub.public_key();
     let shared = eph
         .private_key
         .calculate_agreement(recipient_static_pub)
-        .map_err(|_| SealedSenderError::DecryptionFailed)?;
+        .map_err(|_| SealedSenderError::Malformed)?;
 
     // 3. HKDF-SHA256(shared, salt=SealedSender-v1, info=eph_pub) → 32-byte AEAD key. Binding
     //    eph_pub into the info means the key is specific to this ephemeral key, so reusing the
