@@ -19,6 +19,7 @@
 //! in [`mod@dht`].
 
 pub mod dht;
+pub mod online;
 pub mod privacy;
 
 use libp2p::{

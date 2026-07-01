@@ -19,7 +19,7 @@ path = "src/lib.rs"
 # - ping: minimal behaviour used to prove a usable, bidirectional encrypted session end-to-end.
 # - kad: Kademlia DHT used to publish and look up prekey bundles (this story).
 libp2p = { workspace = true, features = ["tcp", "quic", "noise", "yamux", "tokio", "macros", "ping", "kad"] }
-tokio = { version = "1", features = ["net"] }
+tokio = { version = "1", features = ["net", "time"] }
 tokio-socks = "0.5"
 tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
