@@ -94,8 +94,11 @@ pub fn export(passphrase: &[u8], records: &[Vec<u8>]) -> Result<Vec<u8>, BackupE
     // 1. Draw fresh salt + nonce.
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.try_fill_bytes(&mut salt).map_err(|_| BackupError::Empty)?;
-    OsRng.try_fill_bytes(&mut nonce_bytes)
+    OsRng
+        .try_fill_bytes(&mut salt)
+        .map_err(|_| BackupError::Empty)?;
+    OsRng
+        .try_fill_bytes(&mut nonce_bytes)
         .map_err(|_| BackupError::Empty)?;
 
     // 2. Derive the 32-byte AEAD key from the passphrase.
@@ -111,8 +114,7 @@ pub fn export(passphrase: &[u8], records: &[Vec<u8>]) -> Result<Vec<u8>, BackupE
     let aad = build_aad(&salt, &nonce_bytes);
 
     // 5. Encrypt.
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .expect("Aes256Gcm accepts any 32-byte key");
+    let cipher = Aes256Gcm::new_from_slice(&key).expect("Aes256Gcm accepts any 32-byte key");
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext_with_tag = cipher
         .encrypt(
@@ -127,7 +129,8 @@ pub fn export(passphrase: &[u8], records: &[Vec<u8>]) -> Result<Vec<u8>, BackupE
     // 6. Assemble the blob. The tag is the trailing 16 bytes of `ciphertext_with_tag` for
     //    AES-GCM; we don't need to peel it off, but we *do* need the total length to be
     //    deterministic, which is just plaintext.len() + TAG_LEN.
-    let mut blob = Vec::with_capacity(MAGIC.len() + 1 + SALT_LEN + NONCE_LEN + ciphertext_with_tag.len());
+    let mut blob =
+        Vec::with_capacity(MAGIC.len() + 1 + SALT_LEN + NONCE_LEN + ciphertext_with_tag.len());
     blob.extend_from_slice(MAGIC);
     blob.push(VERSION);
     blob.extend_from_slice(&salt);
@@ -204,8 +207,7 @@ pub fn import(passphrase: &[u8], blob: &[u8]) -> Result<Vec<Vec<u8>>, BackupErro
     // the passphrase).
     let aad = build_aad(&salt, &nonce_bytes);
     let mut key = derive_key(passphrase, &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .expect("Aes256Gcm accepts any 32-byte key");
+    let cipher = Aes256Gcm::new_from_slice(&key).expect("Aes256Gcm accepts any 32-byte key");
     let nonce = Nonce::from_slice(&nonce_bytes);
     let plaintext = cipher
         .decrypt(
@@ -236,8 +238,13 @@ fn derive_key(passphrase: &[u8], salt: &[u8; SALT_LEN]) -> Result<[u8; 32], Back
     // detail; the underlying salt bytes are the same ones we'll hash with.
     let salt_b64 = SaltString::encode_b64(salt).map_err(|_| BackupError::Empty)?;
 
-    let params = Params::new(ARGON2_MEM_KIB, ARGON2_TIME_COST, ARGON2_PARALLELISM, Some(32))
-        .map_err(|_| BackupError::Empty)?;
+    let params = Params::new(
+        ARGON2_MEM_KIB,
+        ARGON2_TIME_COST,
+        ARGON2_PARALLELISM,
+        Some(32),
+    )
+    .map_err(|_| BackupError::Empty)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let phc = argon
@@ -345,6 +352,9 @@ mod tests {
         let records: Vec<Vec<u8>> = vec![b"hello".to_vec()];
         let buf = serialize_records(&records);
         let truncated = &buf[..buf.len() - 1];
-        assert!(matches!(deserialize_records(truncated), Err(BackupError::Tampered)));
+        assert!(matches!(
+            deserialize_records(truncated),
+            Err(BackupError::Tampered)
+        ));
     }
 }

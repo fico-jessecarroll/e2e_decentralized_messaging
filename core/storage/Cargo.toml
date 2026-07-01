@@ -1,15 +1,11 @@
 [package]
-name = "core-storage"
+name = "storage"
 version.workspace = true
 edition.workspace = true
 description = "SQLCipher-backed key/session/message store, backup export/import"
 
 [lib]
-# Crate name on the Rust side is `core_storage`; the package name in `Cargo.toml` is the
-# hyphenated form `core-storage` (cargo's standard convention for crate directories) so the
-# workspace `members = ["core/storage"]` entry can stay as-is and callers reference it as
-# `core_storage::...` in their `use` statements.
-name = "core_storage"
+name = "storage"
 path = "src/lib.rs"
 
 [dependencies]
