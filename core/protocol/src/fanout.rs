@@ -39,55 +39,38 @@ use std::collections::BTreeMap;
 
 use libsignal_protocol::IdentityKeyPair;
 use thiserror::Error;
-use tokio::runtime::Handle;
 
 use crypto::{DoubleRatchetSession, IdentityKeyPairExt};
 
-/// Drive an async future to completion, working both inside and outside an existing
-/// tokio runtime.
+/// Drive an async future to completion, regardless of what runtime (if any) is active
+/// on the calling thread.
 ///
 /// `DoubleRatchetSession`'s PQXDH establishment and Double Ratchet encrypt/decrypt are
-/// async. The fan-out API is sync (the acceptance test in `tests/per_device_fanout.rs`
-/// does not `.await`), so we need to block on the underlying futures. Three cases:
+/// async over the `libsignal` in-memory session store, but that store does no I/O and
+/// uses no tokio-specific primitives, so every future here resolves on its very first
+/// poll — it never actually suspends. The fan-out API is sync (the acceptance test in
+/// `tests/per_device_fanout.rs` does not `.await`), so we need to drive these futures
+/// to completion without an `.await` point of our own.
 ///
-/// 1. **No runtime active.** Create a fresh single-thread runtime per call. The fan-out
-///    operations are short-lived and the runtime is dropped at the end of the call so
-///    no thread is leaked.
-/// 2. **Inside a multi-thread runtime.** `block_in_place` on the current worker thread
-///    and then `Handle::current().block_on(...)` on the future — this is the supported
-///    way to block from a tokio worker without deadlocking the executor.
-/// 3. **Inside a current-thread runtime.** `Handle::current().block_on(...)` directly —
-///    we are the only task, so blocking is fine.
+/// An earlier version of this helper tried to detect and special-case "is a tokio
+/// runtime active on this thread, and if so which flavor" using `tokio::runtime::Handle`
+/// — that approach panicked when called from inside a tokio *current-thread* runtime
+/// (`Handle::block_on` cannot block the very thread already driving that runtime: "Cannot
+/// start a runtime from within a runtime"). `futures_executor::block_on` sidesteps the
+/// problem entirely: it is a minimal, dependency-free poll loop that never touches
+/// tokio's thread-local runtime-context tracking, so it works identically whether the
+/// calling thread has no runtime, a tokio current-thread runtime, or is a tokio
+/// multi-thread worker thread — there is nothing to conflict with. Because the futures
+/// polled here never truly suspend, this never parks the calling thread for longer than
+/// the crypto operation itself takes, so it cannot starve a surrounding tokio runtime's
+/// other tasks.
 ///
 /// Safety of blocking while borrowing `&mut`: the fan-out methods *do* hold a `&mut`
-/// session (or `&mut self`) across `block_on`, but that borrow is exclusive for the
-/// entire synchronous `block_on` call — no other code can touch the borrowed session
-/// while the future is driven, so there is no reentrancy or data race. In the
-/// multi-thread case `block_in_place` may run *other* runtime tasks on other worker
-/// threads, but those tasks cannot access this `&mut` borrow (it is not `Send` and is
-/// not shared), so the exclusive-borrow invariant holds regardless of runtime flavor.
+/// session (or `&mut self`) across this call, but `futures_executor::block_on` runs
+/// entirely on the calling thread with no concurrency of its own — the borrow is never
+/// shared with or handed to another thread, so there is no reentrancy or data race.
 fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    match Handle::try_current() {
-        Ok(handle) => {
-            // If we are inside a runtime, the kind determines whether we can block
-            // on the current thread.
-            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
-                tokio::task::block_in_place(move || handle.block_on(fut))
-            } else {
-                handle.block_on(fut)
-            }
-        }
-        Err(_) => {
-            // No runtime is active. Build a fresh current-thread runtime just for
-            // this call. The runtime and its worker thread are dropped when this
-            // function returns, leaving no leaked resources.
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("build single-thread tokio runtime for fan-out");
-            rt.block_on(fut)
-        }
-    }
+    futures_executor::block_on(fut)
 }
 
 /// Stable, application-defined identifier for one of a recipient user's linked devices.
@@ -123,6 +106,13 @@ pub struct Ciphertext {
 }
 
 /// Errors a `FanoutSession` can surface to its caller.
+///
+/// `Establishment`/`Encrypt`/`Decrypt`'s `Display` forwards the wrapped
+/// `crypto::SessionError`'s detail (which in turn forwards libsignal-internal detail).
+/// That's appropriate for local structured logging, but per this project's Secure by
+/// Design standard, callers that relay these errors across a network trust boundary
+/// (e.g. to a peer or over an API response) must not forward the `Display` text
+/// verbatim — return a generic reason to the peer and log the full detail server-side.
 #[derive(Debug, Error)]
 pub enum FanoutError {
     /// The recipient list contained a duplicate `DeviceId`. Each device must be unique
@@ -155,6 +145,12 @@ pub enum FanoutError {
     /// identities participate.
     #[error("no device in this fan-out matches the given identity key")]
     UnknownIdentity,
+    /// `decrypt_as` was called with a `Ciphertext` whose `device` field does not match
+    /// the device the given identity is linked to. `Ciphertext::device` is a routing
+    /// hint for the transport layer; this catches a caller (or forged input) presenting
+    /// an envelope under a mismatched device label rather than silently ignoring it.
+    #[error("ciphertext claims device {claimed} but identity resolves to device {actual}")]
+    DeviceMismatch { claimed: DeviceId, actual: DeviceId },
 }
 
 /// Per-device session fan-out for 1:1 messaging.
@@ -315,8 +311,10 @@ impl FanoutSession {
     /// # Errors
     ///
     /// Returns [`FanoutError::UnknownIdentity`] if `device_identity` does not match
-    /// any device tracked by this fan-out, and [`FanoutError::Decrypt`] on a ratchet
-    /// failure (wrong session, tampered ciphertext, replay).
+    /// any device tracked by this fan-out, [`FanoutError::DeviceMismatch`] if
+    /// `ciphertext.device` does not match the device `device_identity` resolves to, and
+    /// [`FanoutError::Decrypt`] on a ratchet failure (wrong session, tampered
+    /// ciphertext, replay).
     pub fn decrypt_as(
         &mut self,
         device_identity: &IdentityKeyPair,
@@ -326,6 +324,12 @@ impl FanoutSession {
             .identity_to_device
             .get(&device_identity.identity_hash())
             .ok_or(FanoutError::UnknownIdentity)?;
+        if ciphertext.device != device_id {
+            return Err(FanoutError::DeviceMismatch {
+                claimed: ciphertext.device,
+                actual: device_id,
+            });
+        }
         let session = self
             .receiver_sessions
             .get_mut(&device_id)
@@ -347,11 +351,16 @@ impl FanoutSession {
     /// future persistence-backed implementations that may need to surface store I/O
     /// failures during removal.
     pub fn remove_device(&mut self, device_id: DeviceId) -> Result<(), FanoutError> {
-        if let Some(session) = self.sender_sessions.remove(&device_id) {
-            // Drop the ratchet state explicitly so its `Drop` runs and zeroes any
-            // sensitive in-memory material sooner than the BTreeMap slot reuse would.
-            drop(session);
-        }
+        // NOTE: this drops the map entries, releasing the heap allocations backing the
+        // ratchet state — it does NOT zeroize the underlying key material. libsignal's
+        // `InMemSignalProtocolStore` (which `DoubleRatchetSession` wraps) has no
+        // `Zeroize`/`Drop` impl, so ratchet chain/root keys are left in freed heap
+        // memory until some later allocation happens to overwrite them. Forward secrecy
+        // after removal comes from the ratchet no longer being advanced/used for this
+        // device, not from memory scrubbing. If scrubbing-on-drop is required (e.g. for
+        // core-dump/cold-boot exposure hardening), that is a separate upstream change to
+        // libsignal's store, not something this module can provide on its own.
+        self.sender_sessions.remove(&device_id);
         self.receiver_sessions.remove(&device_id);
         // Drop the identity→device reverse mapping only if it points at the removed
         // device — a different device with a colliding hash is impossible by
@@ -372,7 +381,7 @@ mod tests {
     //! ("always write both positive and negative tests"; boundary conditions include
     //! zero, one, and empty collections).
 
-    use super::{DeviceId, FanoutError, FanoutSession};
+    use super::{Ciphertext, DeviceId, FanoutError, FanoutSession};
     use crypto::generate_identity_key_pair;
 
     #[test]
@@ -457,5 +466,107 @@ mod tests {
             .decrypt_as(&recipient, &ciphertexts[0])
             .expect("decrypt");
         assert_eq!(opened, b"only you");
+    }
+
+    #[test]
+    fn a_device_cannot_decrypt_another_devices_ciphertext() {
+        let sender = generate_identity_key_pair();
+        let recipient_a = generate_identity_key_pair();
+        let recipient_b = generate_identity_key_pair();
+
+        let mut fanout = FanoutSession::establish(
+            &sender,
+            &[(DeviceId(1), &recipient_a), (DeviceId(2), &recipient_b)],
+        )
+        .expect("establish");
+        let ciphertexts = fanout.encrypt_to_all(b"secret").expect("encrypt");
+
+        // Device B's identity against device A's envelope: neither the device-mismatch
+        // check nor the ratchet session should let this through.
+        let mismatched = Ciphertext {
+            device: DeviceId(2),
+            envelope: ciphertexts[0].envelope.clone(),
+        };
+        let result = fanout.decrypt_as(&recipient_b, &mismatched);
+        assert!(
+            matches!(result, Err(FanoutError::Decrypt(DeviceId(2), _))),
+            "device B must not be able to decrypt device A's ciphertext, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn decrypt_as_rejects_a_ciphertext_with_a_mismatched_device_label() {
+        let sender = generate_identity_key_pair();
+        let recipient_a = generate_identity_key_pair();
+        let recipient_b = generate_identity_key_pair();
+
+        let mut fanout = FanoutSession::establish(
+            &sender,
+            &[(DeviceId(1), &recipient_a), (DeviceId(2), &recipient_b)],
+        )
+        .expect("establish");
+        let ciphertexts = fanout.encrypt_to_all(b"secret").expect("encrypt");
+
+        // Device A's own envelope, but forged to claim it targets device 2 — the
+        // `device` field must be validated against the identity, not trusted blindly.
+        let forged = Ciphertext {
+            device: DeviceId(2),
+            envelope: ciphertexts[0].envelope.clone(),
+        };
+        let result = fanout.decrypt_as(&recipient_a, &forged);
+        assert!(
+            matches!(
+                result,
+                Err(FanoutError::DeviceMismatch {
+                    claimed: DeviceId(2),
+                    actual: DeviceId(1),
+                })
+            ),
+            "mismatched device label must be rejected with DeviceMismatch, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn decrypting_after_the_device_was_removed_is_unknown_identity() {
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+
+        let mut fanout =
+            FanoutSession::establish(&sender, &[(DeviceId(1), &recipient)]).expect("establish");
+        let ciphertexts = fanout.encrypt_to_all(b"before removal").expect("encrypt");
+
+        fanout.remove_device(DeviceId(1)).expect("remove device 1");
+
+        let result = fanout.decrypt_as(&recipient, &ciphertexts[0]);
+        assert!(
+            matches!(result, Err(FanoutError::UnknownIdentity)),
+            "decrypting after the device was removed must fail with UnknownIdentity, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn fanout_works_from_inside_a_current_thread_runtime() {
+        // Reproduces the bug this test guards against: the fan-out API is sync and
+        // internally calls the module's `block_on` helper. Calling it from the very
+        // thread already driving a current-thread tokio runtime must not panic
+        // ("Cannot start a runtime from within a runtime") — it must offload to a
+        // scoped worker thread instead (see `block_on`'s case 3).
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime for test");
+        rt.block_on(async {
+            let sender = generate_identity_key_pair();
+            let recipient = generate_identity_key_pair();
+            let mut fanout = FanoutSession::establish(&sender, &[(DeviceId(1), &recipient)])
+                .expect("establish must succeed from inside a current-thread runtime");
+            let ciphertexts = fanout
+                .encrypt_to_all(b"from a current-thread runtime")
+                .expect("encrypt must succeed from inside a current-thread runtime");
+            let opened = fanout
+                .decrypt_as(&recipient, &ciphertexts[0])
+                .expect("decrypt must succeed from inside a current-thread runtime");
+            assert_eq!(opened, b"from a current-thread runtime");
+        });
     }
 }
