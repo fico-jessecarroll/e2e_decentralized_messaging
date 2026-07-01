@@ -39,7 +39,27 @@
 //! The sender identity key is the libsignal 33-byte serialization (1-byte type tag + 32-byte
 //! Curve25519 point). It is encrypted, so its raw bytes never appear in the envelope — that is
 //! exactly what the relay-hiding acceptance test asserts. `open` strips the 33-byte sender prefix
-//! and returns only the payload.
+//! and returns only the payload; the sender-id prefix itself is intentionally *not* surfaced to
+//! callers today (see "Sender authenticity" below) — it is reserved wire-format space for a
+//! future authenticated-recovery path, not a currently-usable output.
+//!
+//! ## Sender authenticity is NOT provided by this layer
+//!
+//! This module hides the sender from the *relay* (an observer of envelope bytes cannot tell who
+//! sent it). It does **not** authenticate the sender to the *recipient*: `seal` only reads
+//! `sender.identity_key()` — the sender's **public** key — never the sender's private key, so
+//! there is no signature, no proof-of-possession, and no static-static DH term binding the
+//! claimed sender to the envelope. Anyone who knows a victim's public identity key (public by
+//! design) can call `seal` with that key as `sender` and produce an envelope that decrypts
+//! cleanly, with the victim's identity in the (currently discarded) inner prefix.
+//!
+//! This is why `open` does not return the sender-id prefix: exposing an unauthenticated value
+//! under a name like "sender identity" invites a caller to trust it. If a future change surfaces
+//! that prefix, it MUST be documented and treated as an **unauthenticated routing hint only** —
+//! never used for access control, display-without-corroboration, or any trust decision — and
+//! corroborated against the authenticated identity of the inner Double Ratchet/PQXDH session
+//! before being relied on for anything security-relevant. Real sender authentication in this
+//! system comes from the inner ratchet session, not from this envelope layer.
 //!
 //! ## Failure model (fail closed)
 //!
@@ -216,15 +236,19 @@ pub fn open(recipient: &IdentityKeyPair, envelope: &[u8]) -> Result<Vec<u8>, Sea
     let mut shared = shared;
     shared.zeroize();
 
-    let plaintext = plaintext?;
+    let mut plaintext = plaintext?;
 
     // Strip the 33-byte sender-identity prefix; the remainder is the payload.
     if plaintext.len() < SENDER_ID_LEN {
         // Authenticated but truncated inner frame — the envelope was tampered after a valid seal,
         // which is impossible without the key, so treat it as not-for-recipient / tampered.
+        plaintext.zeroize();
         return Err(SealedSenderError::NotForRecipient);
     }
     let payload = plaintext[SENDER_ID_LEN..].to_vec();
+    // The full decrypted buffer (sender-id prefix + a copy of payload) is no longer needed —
+    // zeroize it rather than letting it linger un-scrubbed until the allocator reuses it.
+    plaintext.zeroize();
     Ok(payload)
 }
 
@@ -272,5 +296,70 @@ mod tests {
         let envelope = seal(&sender, &recipient.public_identity(), b"").unwrap();
         let opened = open(&recipient, &envelope).unwrap();
         assert!(opened.is_empty());
+    }
+
+    #[test]
+    fn bit_flipped_ciphertext_fails_aead_authentication() {
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+        let mut envelope = seal(&sender, &recipient.public_identity(), b"payload").unwrap();
+        let last = envelope.len() - 1;
+        envelope[last] ^= 0x01;
+        assert!(matches!(
+            open(&recipient, &envelope),
+            Err(SealedSenderError::DecryptionFailed)
+        ));
+    }
+
+    #[test]
+    fn bit_flipped_ephemeral_pubkey_fails() {
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+        let mut envelope = seal(&sender, &recipient.public_identity(), b"payload").unwrap();
+        envelope[0] ^= 0x01;
+        // Wrong ephemeral pubkey byte either fails to parse as a valid Curve25519 point
+        // (Malformed) or parses but derives a different shared secret, which the AEAD
+        // rejects (DecryptionFailed). Either is a correct rejection.
+        assert!(matches!(
+            open(&recipient, &envelope),
+            Err(SealedSenderError::Malformed) | Err(SealedSenderError::DecryptionFailed)
+        ));
+    }
+
+    #[test]
+    fn bit_flipped_nonce_fails_aead_authentication() {
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+        let mut envelope = seal(&sender, &recipient.public_identity(), b"payload").unwrap();
+        envelope[EPH_PUB_LEN] ^= 0x01;
+        assert!(matches!(
+            open(&recipient, &envelope),
+            Err(SealedSenderError::DecryptionFailed)
+        ));
+    }
+
+    #[test]
+    fn captured_envelope_can_be_opened_more_than_once() {
+        // Documents, deliberately: this envelope layer provides no replay protection of
+        // its own. Replay resistance is the inner Double Ratchet session's job (each
+        // ratchet message key is used at most once); a captured Sealed Sender envelope
+        // is not itself a single-use token.
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+        let envelope = seal(&sender, &recipient.public_identity(), b"payload").unwrap();
+        assert_eq!(open(&recipient, &envelope).unwrap(), b"payload");
+        assert_eq!(open(&recipient, &envelope).unwrap(), b"payload");
+    }
+
+    #[test]
+    fn exact_minimum_length_garbage_reaches_aead_and_fails_decryption() {
+        let recipient = generate_identity_key_pair();
+        let garbage = vec![0u8; MIN_ENVELOPE_LEN];
+        let result = open(&recipient, &garbage);
+        assert!(
+            matches!(result, Err(SealedSenderError::Malformed))
+                || matches!(result, Err(SealedSenderError::DecryptionFailed)),
+            "boundary-length garbage must be rejected, got: {result:?}"
+        );
     }
 }
