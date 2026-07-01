@@ -3,12 +3,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use libsignal_protocol::{
-    kem, GenericSignedPreKey, IdentityKey, IdentityKeyPair, KyberPreKeyId, KyberPreKeyRecord,
-    KeyPair, PreKeyBundle, PreKeyId, PreKeyRecord, PrivateKey, SignedPreKeyId, SignedPreKeyRecord,
-    Timestamp,
+    GenericSignedPreKey, IdentityKey, IdentityKeyPair, KeyPair, PreKeyId, PreKeyRecord,
+    SignedPreKeyId, SignedPreKeyRecord, Timestamp,
 };
 use rand::rngs::OsRng;
 use rand::TryRngCore;
@@ -96,41 +94,6 @@ pub fn generate_one_time_pre_keys(start_id: u32, count: u32) -> Vec<PreKeyRecord
             PreKeyRecord::new(PreKeyId::from(start_id + offset), &key_pair)
         })
         .collect()
-}
-
-/// Generate a single one-time prekey with the given ID.
-///
-/// Convenience wrapper around [`generate_one_time_pre_keys`] for callers that mint one
-/// prekey at a time (e.g. the replenish loop in [`PreKeyPool::replenish_to_target`]).
-pub fn generate_one_time_prekey(id: u32) -> PreKeyRecord {
-    generate_one_time_pre_keys(id, 1)
-        .into_iter()
-        .next()
-        .expect("count=1 must produce exactly one record")
-}
-
-/// Generate a signed prekey, XEdDSA-signed by `signing_key`, stamping it with the current
-/// wall-clock time.
-///
-/// Convenience form of [`generate_signed_pre_key`] for callers that don't need to control
-/// the timestamp explicitly (e.g. tests or one-shot key generation).
-pub fn generate_signed_prekey(
-    signing_key: &PrivateKey,
-    id: u32,
-) -> Result<SignedPreKeyRecord, libsignal_protocol::SignalProtocolError> {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let mut rng = OsRng.unwrap_err();
-    let key_pair = KeyPair::generate(&mut rng);
-    let signature = signing_key.calculate_signature(&key_pair.public_key.serialize(), &mut rng)?;
-    Ok(SignedPreKeyRecord::new(
-        SignedPreKeyId::from(id),
-        Timestamp::from_epoch_millis(now_ms),
-        &key_pair,
-        &signature,
-    ))
 }
 
 /// A device's pool of unused one-time prekeys. Each prekey can be taken exactly once; a second
@@ -296,8 +259,7 @@ impl PreKeyPool {
         // Append the new records to the inner pool. We do this by rebuilding the pool because
         // `OneTimePreKeyPool::new` is the only public way to bulk-insert records — and it
         // deduplicates by ID, which is exactly the invariant we want here.
-        let mut all_records: Vec<PreKeyRecord> =
-            self.inner.available.values().cloned().collect();
+        let mut all_records: Vec<PreKeyRecord> = self.inner.available.values().cloned().collect();
         all_records.extend(new_records);
         self.inner = OneTimePreKeyPool::new(all_records)?;
         Ok(())

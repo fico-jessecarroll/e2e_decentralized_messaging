@@ -19,3 +19,8 @@ sha2 = "0.10"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+# The signed-prekey-fallback acceptance test drives the real async
+# `establish_outbound_session` against an `InMemSignalProtocolStore`, which needs these
+# crate-level types directly. Dev-only — does not widen the public `crypto` API.
+libsignal-protocol.workspace = true
+rand.workspace = true

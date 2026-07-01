@@ -4,11 +4,30 @@
 //!  - Replenish one-time prekeys when the pool drops below a low-watermark
 //!  - Session establishment still succeeds via the signed-prekey fallback when
 //!    no one-time prekey is available (no hard failure on OTPK exhaustion)
+//!
+//! Tests use the real `crypto` API surface: [`PreKeyPool`] for replenishment, and the
+//! async store-based [`establish_outbound_session`] + PQXDH [`build_prekey_bundle`] for the
+//! fallback path. At the pinned libsignal revision every bundle carries a Kyber KEM prekey
+//! (PQXDH); the one-time prekey is the optional element whose absence exercises the
+//! signed-prekey fallback.
 
-use crypto::prekey::{
-    build_prekey_bundle, generate_one_time_prekey, generate_signed_prekey,
-    PreKeyError, PreKeyPool,
+use crypto::prekey::{generate_signed_pre_key, PreKeyPool};
+use crypto::session::{build_prekey_bundle, establish_outbound_session, generate_kyber_prekey};
+
+use libsignal_protocol::{
+    DeviceId, InMemSignalProtocolStore, KyberPreKeyId, ProtocolAddress, Timestamp,
 };
+use rand::rngs::OsRng;
+use rand::TryRngCore as _;
+
+/// Test registration id (matches the value `crypto::ratchet_session` uses).
+const REGISTRATION_ID: u32 = 1;
+/// A valid libp2p/Signal device id (1..=127).
+const DEVICE_ID: u8 = 1;
+
+fn device_id() -> DeviceId {
+    DeviceId::new(DEVICE_ID).expect("DEVICE_ID is a valid device id (1..=127)")
+}
 
 #[test]
 fn pool_replenishes_below_low_watermark() {
@@ -24,7 +43,10 @@ fn pool_replenishes_below_low_watermark() {
 
     pool.replenish_to_target(20).expect("replenish ok");
 
-    assert!(!pool.below_watermark(), "replenished pool must clear watermark");
+    assert!(
+        !pool.below_watermark(),
+        "replenished pool must clear watermark"
+    );
     assert!(
         pool.remaining() >= 20,
         "replenished pool must hold at least the target (got {})",
@@ -32,31 +54,50 @@ fn pool_replenishes_below_low_watermark() {
     );
 }
 
-#[test]
-fn session_establishment_succeeds_with_signed_prekey_fallback_when_no_one_time() {
-    // Provider has a signed prekey but ZERO one-time prekeys (exhausted).
-    let identity = crypto::generate_identity_key_pair().unwrap();
-    let signed = generate_signed_prekey(&identity.private_key(), 1).unwrap();
+#[tokio::test]
+async fn session_establishment_succeeds_with_signed_prekey_fallback_when_no_one_time() {
+    // Provider (Bob): identity + signed prekey + Kyber prekey, ZERO one-time prekeys (exhausted).
+    // At the pinned libsignal revision a PQXDH bundle always carries a Kyber KEM prekey; the
+    // one-time prekey is the only optional element, so passing `None` for it exercises the
+    // signed-prekey fallback path the story requires.
+    let bob = crypto::generate_identity_key_pair();
+    let signed = generate_signed_pre_key(&bob, 1, Timestamp::from_epoch_millis(0));
+    let kyber =
+        generate_kyber_prekey(KyberPreKeyId::from(1u32), bob.private_key()).expect("kyber prekey");
     let bundle = build_prekey_bundle(
-        identity.registration_id(),
-        identity.device_id(),
-        &identity,
+        REGISTRATION_ID,
+        device_id(),
+        &bob,
         &signed,
-        /* one_time_prekey = */ None, // <- the fallback path
+        &kyber,
+        // <- no one-time prekey: the signed-prekey fallback path
+        None,
     )
     .expect("bundle built without one-time prekey (fallback)");
 
-    let recipient = crypto::generate_identity_key_pair().unwrap();
-    let session = crypto::session::establish_outbound(
-        &recipient,
+    // Sender (Alice): establishes an outbound session from Bob's no-OTPK bundle. A successful
+    // return proves the signed-prekey fallback — establishment does NOT require a one-time
+    // prekey and must not hard-fail on OTPK exhaustion.
+    let alice = crypto::generate_identity_key_pair();
+    let mut store = InMemSignalProtocolStore::new(alice, REGISTRATION_ID).expect("alice store");
+    let alice_addr = ProtocolAddress::new("alice".to_string(), device_id());
+    let bob_addr = ProtocolAddress::new("bob".to_string(), device_id());
+    let mut rng = OsRng.unwrap_err();
+
+    let res = establish_outbound_session(
+        &alice_addr,
+        &bob_addr,
         &bundle,
-        /* accept_no_one_time = */ true,
-    );
+        &mut store.session_store,
+        &mut store.identity_store,
+        &mut rng,
+    )
+    .await;
 
     assert!(
-        session.is_ok(),
+        res.is_ok(),
         "establishment must succeed via signed-prekey fallback; got {:?}",
-        session.err()
+        res.err()
     );
 }
 
