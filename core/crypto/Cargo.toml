@@ -1,11 +1,11 @@
 [package]
-name = "core-crypto"
+name = "crypto"
 version.workspace = true
 edition.workspace = true
 description = "libsignal integration, identity, session, sender keys"
 
 [lib]
-name = "core_crypto"
+name = "crypto"
 path = "src/lib.rs"
 
 [dependencies]

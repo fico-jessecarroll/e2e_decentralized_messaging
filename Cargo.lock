@@ -463,17 +463,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18f12cc9948ed9604230cdddc7c86e270f9401ccbe3c2e98a4378c5e7632212f"
 
 [[package]]
-name = "core-crypto"
-version = "0.1.0"
-dependencies = [
- "libsignal-protocol",
- "qrcode",
- "rand 0.9.4",
- "sha2",
- "tokio",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -498,16 +487,6 @@ dependencies = [
  "hax-lib",
  "pastey",
  "rand 0.9.4",
-]
-
-[[package]]
-name = "core-protocol"
-version = "0.1.0"
-dependencies = [
- "core-crypto",
- "libsignal-protocol",
- "thiserror 1.0.69",
- "tokio",
 ]
 
 [[package]]
@@ -564,6 +543,17 @@ name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
+name = "crypto"
+version = "0.1.0"
+dependencies = [
+ "libsignal-protocol",
+ "qrcode",
+ "rand 0.9.4",
+ "sha2",
+ "tokio",
+]
 
 [[package]]
 name = "crypto-common"
@@ -2786,6 +2776,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol"
+version = "0.1.0"
+dependencies = [
+ "crypto",
+ "libsignal-protocol",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "qrcode"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3455,7 +3455,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "storage"
 version = "0.1.0"
 dependencies = [
- "core-crypto",
+ "crypto",
  "rusqlite",
  "tempfile",
  "zeroize",
@@ -3793,7 +3793,7 @@ dependencies = [
 name = "transport"
 version = "0.1.0"
 dependencies = [
- "core-crypto",
+ "crypto",
  "futures",
  "futures_ringbuf",
  "libp2p",

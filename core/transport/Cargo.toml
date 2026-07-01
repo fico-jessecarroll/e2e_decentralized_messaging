@@ -24,7 +24,7 @@ tokio-socks = "0.5"
 tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
 # Prekey-bundle types and signature verification reused for DHT records — no crypto reinvented here.
-crypto = { package = "core-crypto", path = "../crypto" }
+crypto = { path = "../crypto" }
 libsignal-protocol.workspace = true
 
 [dev-dependencies]

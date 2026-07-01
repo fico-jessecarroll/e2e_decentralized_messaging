@@ -1,11 +1,11 @@
 [package]
-name = "core-protocol"
+name = "protocol"
 version.workspace = true
 edition.workspace = true
 description = "Message envelopes, prekey management, protobuf-generated types"
 
 [lib]
-name = "core_protocol"
+name = "protocol"
 path = "src/lib.rs"
 
 [dependencies]
@@ -15,14 +15,15 @@ path = "src/lib.rs"
 # posture identical to a single-device session and avoids re-introducing address /
 # store types into the protocol crate (PLAN.md Phase 6 "Per-device session
 # fan-out").
-crypto.workspace = true
+crypto = { path = "../crypto" }
 libsignal-protocol.workspace = true
 # `DoubleRatchetSession`'s PQXDH establishment and Double Ratchet encrypt/decrypt
 # are async over the `libsignal` session store. The fan-out API is sync (see the
 # acceptance test in `tests/per_device_fanout.rs`), so we drive the underlying
-# futures on a private multi-thread runtime per call. Tokio's `rt` feature is
-# sufficient — we never need a reactor.
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-# thiserror for the public `FanoutError` enum; keeps the Display impls uniform
-# with the rest of the workspace.
+# futures to completion on a private runtime per call. `rt` + `rt-multi-thread`
+# give `block_in_place`/`Handle::block_on` what they need; `macros` is unused here
+# but harmless and matches the transport crate's tokio feature set.
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+# thiserror for the public `FanoutError` enum; keeps Display impls uniform with
+# the rest of the workspace.
 thiserror = "1"

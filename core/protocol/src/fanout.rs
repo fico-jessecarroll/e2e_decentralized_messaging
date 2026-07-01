@@ -230,9 +230,8 @@ impl FanoutSession {
                 .publish_bundle()
                 .map_err(|e| FanoutError::Establishment(*device_id, e))?;
 
-            let outbound =
-                block_on(DoubleRatchetSession::new_alice(sender, &bundle))
-                    .map_err(|e| FanoutError::Establishment(*device_id, e))?;
+            let outbound = block_on(DoubleRatchetSession::new_alice(sender, &bundle))
+                .map_err(|e| FanoutError::Establishment(*device_id, e))?;
 
             // Sanity check: ratchet envelopes are self-describing only by sender
             // identity hash, so a single sender establishing sessions against
