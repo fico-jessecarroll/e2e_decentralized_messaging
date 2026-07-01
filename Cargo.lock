@@ -3816,15 +3816,19 @@ dependencies = [
 name = "transport"
 version = "0.1.0"
 dependencies = [
+ "chacha20poly1305",
  "crypto",
  "futures",
  "futures_ringbuf",
+ "hkdf",
  "libp2p",
  "libsignal-protocol",
  "rand 0.9.4",
+ "sha2",
  "tokio",
  "tokio-socks",
  "tokio-util",
+ "zeroize",
 ]
 
 [[package]]
