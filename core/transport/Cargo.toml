@@ -26,6 +26,20 @@ futures = "0.3"
 # Prekey-bundle types and signature verification reused for DHT records — no crypto reinvented here.
 crypto = { path = "../crypto" }
 libsignal-protocol.workspace = true
+# Sealed Sender envelope (PLAN.md Phase 4) — ephemeral-static X25519 ECDH + AEAD. All four are
+# already transitive deps of `libsignal-protocol` (see Cargo.lock), so listing them here does not
+# pull in new code; it just makes the vetted primitives available to `sealed_sender` directly.
+#   - rand: CSPRNG for the ephemeral keypair and the AEAD nonce.
+#   - hkdf + sha2: HKDF-SHA256 to derive the AEAD key from the ECDH shared secret (Signal's own
+#     Sealed Sender uses the same HKDF-SHA256 construction).
+#   - chacha20poly1305: the AEAD (ChaCha20-Poly1305, 12-byte nonce, 16-byte tag).
+rand.workspace = true
+hkdf = "0.12"
+sha2 = "0.10"
+chacha20poly1305 = "0.10"
+# zeroize: clear the ECDH shared secret and AEAD key from memory as soon as they are no longer
+# needed (Secure-by-Design "data minimization" — sensitive key material has a bounded lifetime).
+zeroize.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

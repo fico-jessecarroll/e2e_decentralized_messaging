@@ -15,12 +15,10 @@ use rand::TryRngCore;
 
 pub mod device_qr;
 pub mod double_ratchet;
-pub mod identity_ext;
 pub mod prekey;
 pub mod ratchet_session;
 pub mod session;
 
-pub use identity_ext::{IdentityKeyExt, IdentityKeyPairExt2};
 pub use ratchet_session::{DoubleRatchetSession, IdentityKeyPairExt, SessionError};
 
 /// Fingerprint version and iteration count Signal clients use for safety-number display

@@ -21,6 +21,7 @@
 pub mod dht;
 pub mod online;
 pub mod privacy;
+pub mod sealed_sender;
 
 use libp2p::{
     core::{upgrade, Transport},

@@ -4,21 +4,24 @@
 //!  - Relay-side test asserts sender identity is not recoverable from the envelope
 //!  - Negative: a malformed sealed-sender envelope is rejected by the recipient, not silently accepted
 
-use core_transport::sealed_sender::{seal, open, SealedSenderError};
-use core_crypto::identity::IdentityKeyPair;
+use crypto::{generate_identity_key_pair, IdentityKeyPairExt};
+use transport::sealed_sender::{open, seal, SealedSenderError};
 
 #[test]
 fn sealed_envelope_hides_sender_identity_from_observed_blob() {
-    let sender = IdentityKeyPair::generate();
-    let recipient = IdentityKeyPair::generate();
+    let sender = generate_identity_key_pair();
+    let recipient = generate_identity_key_pair();
 
     let payload = b"hello, this is the actual message body";
-    let envelope = seal(&sender, &recipient.public(), payload).expect("seal succeeds");
+    let envelope = seal(&sender, &recipient.public_identity(), payload).expect("seal succeeds");
 
     // The sender's identity (public key) must NOT appear verbatim in the envelope.
-    let sender_pub_bytes = sender.public().to_bytes();
+    let sender_id = sender.public_identity();
+    let sender_pub_bytes = sender_id.public_key().public_key_bytes();
     assert!(
-        !envelope.windows(sender_pub_bytes.len()).any(|w| w == sender_pub_bytes),
+        !envelope
+            .windows(sender_pub_bytes.len())
+            .any(|w| w == sender_pub_bytes),
         "envelope must not contain sender's raw public key bytes"
     );
 
@@ -29,7 +32,7 @@ fn sealed_envelope_hides_sender_identity_from_observed_blob() {
 
 #[test]
 fn malformed_sealed_envelope_is_rejected_not_accepted() {
-    let recipient = IdentityKeyPair::generate();
+    let recipient = generate_identity_key_pair();
     let garbage = vec![0xDEu8; 64];
 
     let result = open(&recipient, &garbage);
@@ -41,16 +44,19 @@ fn malformed_sealed_envelope_is_rejected_not_accepted() {
 
 #[test]
 fn envelope_addressed_to_other_recipient_cannot_be_opened() {
-    let sender = IdentityKeyPair::generate();
-    let intended = IdentityKeyPair::generate();
-    let attacker = IdentityKeyPair::generate();
+    let sender = generate_identity_key_pair();
+    let intended = generate_identity_key_pair();
+    let attacker = generate_identity_key_pair();
 
-    let envelope = seal(&sender, &intended.public(), b"private").expect("seal succeeds");
+    let envelope = seal(&sender, &intended.public_identity(), b"private").expect("seal succeeds");
 
     // A different recipient holding the wrong identity must NOT be able to open it.
     let result = open(&attacker, &envelope);
     assert!(
-        matches!(result, Err(SealedSenderError::NotForRecipient) | Err(SealedSenderError::DecryptionFailed)),
+        matches!(
+            result,
+            Err(SealedSenderError::NotForRecipient) | Err(SealedSenderError::DecryptionFailed)
+        ),
         "wrong-recipient open must fail, got: {result:?}"
     );
 }
