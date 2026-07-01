@@ -11,6 +11,20 @@ path = "src/lib.rs"
 [dependencies]
 rusqlite.workspace = true
 zeroize.workspace = true
+# Backup format (PLAN.md Phase 2 "Encrypted backup export/import format"):
+#   - aes-gcm: AEAD for the per-record payload (AES-256-GCM with 12-byte nonce, 16-byte tag).
+#   - argon2: memory-hard KDF over the user-supplied passphrase → 32-byte key. `password-hash`
+#     is the trait layer argon2 uses for the PHC string format and parameter validation.
+#   - rand: CSPRNG for the per-blob salt and AEAD nonce.
+#   - sha2: SHA-256 of the AAD (format header) for domain separation / binding the header into the
+#     AEAD's associated-data so a tampered header is rejected with `BackupError::Tampered`
+#     rather than silently decrypting into garbage.
+aes-gcm = "0.10"
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["std"] }
+rand.workspace = true
+rand_core = { version = "0.9", features = ["os_rng"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3.14.0"
