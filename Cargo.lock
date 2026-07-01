@@ -2801,6 +2801,13 @@ dependencies = [
 [[package]]
 name = "protocol"
 version = "0.1.0"
+dependencies = [
+ "crypto",
+ "futures-executor",
+ "libsignal-protocol",
+ "thiserror 1.0.69",
+ "tokio",
+]
 
 [[package]]
 name = "qrcode"

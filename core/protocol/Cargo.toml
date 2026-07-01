@@ -7,3 +7,30 @@ description = "Message envelopes, prekey management, protobuf-generated types"
 [lib]
 name = "protocol"
 path = "src/lib.rs"
+
+[dependencies]
+# Per-device fan-out uses the same `DoubleRatchetSession` facade the rest of the
+# codebase already establishes 1:1 sessions through. Tying the fan-out to this
+# audited facade — not to `libsignal` types directly — keeps per-device security
+# posture identical to a single-device session and avoids re-introducing address /
+# store types into the protocol crate (PLAN.md Phase 6 "Per-device session
+# fan-out").
+crypto = { path = "../crypto" }
+libsignal-protocol.workspace = true
+# `DoubleRatchetSession`'s PQXDH establishment and Double Ratchet encrypt/decrypt are
+# async over the `libsignal` session store, but never actually suspend — the store is
+# in-memory with no I/O and no tokio-specific primitives (verified: no `tokio::`
+# reference anywhere in the crypto session chain), so every future resolves on its
+# first poll. The fan-out API is sync (see the acceptance test in
+# `tests/per_device_fanout.rs`), so `futures-executor`'s free-standing `block_on` drives
+# these futures to completion without depending on — or conflicting with — any tokio
+# runtime the caller may already be running on the same thread.
+futures-executor = "0.3"
+# thiserror for the public `FanoutError` enum; keeps Display impls uniform with
+# the rest of the workspace.
+thiserror = "1"
+
+[dev-dependencies]
+# Only used by a test that simulates a caller already running inside a tokio
+# current-thread runtime (`fanout_works_from_inside_a_current_thread_runtime`).
+tokio = { version = "1", features = ["rt"] }
