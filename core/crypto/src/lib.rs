@@ -16,7 +16,10 @@ use rand::TryRngCore;
 pub mod device_qr;
 pub mod double_ratchet;
 pub mod prekey;
+pub mod ratchet_session;
 pub mod session;
+
+pub use ratchet_session::{DoubleRatchetSession, IdentityKeyPairExt, SessionError};
 
 /// Fingerprint version and iteration count Signal clients use for safety-number display
 /// (matches `libsignal`'s own published test vectors for version 1).
