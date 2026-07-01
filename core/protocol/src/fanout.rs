@@ -59,10 +59,13 @@ use crypto::{DoubleRatchetSession, IdentityKeyPairExt};
 /// 3. **Inside a current-thread runtime.** `Handle::current().block_on(...)` directly —
 ///    we are the only task, so blocking is fine.
 ///
-/// We never call `block_on` while *holding* a non-Send resource across the await, so
-/// case 2 is safe. The ratchet sessions are stored in a `BTreeMap` on `self`; we only
-/// drive one device's future at a time and never hold a `&mut` across the await, so
-/// there is no reentrancy hazard.
+/// Safety of blocking while borrowing `&mut`: the fan-out methods *do* hold a `&mut`
+/// session (or `&mut self`) across `block_on`, but that borrow is exclusive for the
+/// entire synchronous `block_on` call — no other code can touch the borrowed session
+/// while the future is driven, so there is no reentrancy or data race. In the
+/// multi-thread case `block_in_place` may run *other* runtime tasks on other worker
+/// threads, but those tasks cannot access this `&mut` borrow (it is not `Send` and is
+/// not shared), so the exclusive-borrow invariant holds regardless of runtime flavor.
 fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     match Handle::try_current() {
         Ok(handle) => {
@@ -126,6 +129,11 @@ pub enum FanoutError {
     /// within a single fan-out; otherwise the fan-out is ambiguous.
     #[error("duplicate device id {0} in recipient list")]
     DuplicateDevice(DeviceId),
+    /// Two different `DeviceId`s were given the same recipient identity key. Each device
+    /// must carry its own identity; the carried `DeviceId` is the one the identity was
+    /// already linked to.
+    #[error("recipient identity already linked to device {0}")]
+    DuplicateIdentity(DeviceId),
     /// The recipient list was empty. A fan-out with zero targets is meaningless and is
     /// rejected up front so the caller doesn't get back an empty ciphertext list that
     /// looks like a successful no-op send.
@@ -239,9 +247,12 @@ impl FanoutSession {
             // on. Record the identity→device reverse lookup for `decrypt_as`.
             let identity_hash = recipient_identity.identity_hash();
             if let Some(existing) = identity_to_device.get(&identity_hash) {
-                // Same identity re-used for two different device ids — reject up
-                // front so the fan-out is unambiguous.
-                return Err(FanoutError::DuplicateDevice(*existing));
+                // Same identity re-used for two different device ids — reject so the
+                // fan-out is unambiguous. This is a distinct failure from a duplicate
+                // `DeviceId` (the device ids differ; it's the identity that collided),
+                // so it gets its own variant that names the device the identity was
+                // already linked to.
+                return Err(FanoutError::DuplicateIdentity(*existing));
             }
             identity_to_device.insert(identity_hash, *device_id);
 
@@ -349,5 +360,102 @@ impl FanoutSession {
         // public API does not support.
         self.identity_to_device.retain(|_, d| *d != device_id);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Negative and boundary coverage for the fan-out's input-validation paths. The
+    //! acceptance tests in `tests/per_device_fanout.rs` cover the multi-device happy path
+    //! and device removal; this module covers the empty/duplicate/unknown-identity error
+    //! paths and the single-device boundary that the project's testing standards require
+    //! ("always write both positive and negative tests"; boundary conditions include
+    //! zero, one, and empty collections).
+
+    use super::{DeviceId, FanoutError, FanoutSession};
+    use crypto::generate_identity_key_pair;
+
+    #[test]
+    fn establish_rejects_an_empty_device_list() {
+        let sender = generate_identity_key_pair();
+        let result = FanoutSession::establish(&sender, &[]);
+        let Err(e) = result else {
+            panic!("empty recipient list must be rejected with NoDevices, got Ok");
+        };
+        assert!(
+            matches!(e, FanoutError::NoDevices),
+            "empty recipient list must be rejected with NoDevices, got: {e:?}"
+        );
+    }
+
+    #[test]
+    fn establish_rejects_a_duplicate_device_id() {
+        let sender = generate_identity_key_pair();
+        let a = generate_identity_key_pair();
+        let b = generate_identity_key_pair();
+        // Two distinct identities under the *same* DeviceId — the device id collides.
+        let devices = [(DeviceId(1), &a), (DeviceId(1), &b)];
+        let result = FanoutSession::establish(&sender, &devices);
+        let Err(e) = result else {
+            panic!("duplicate DeviceId must be rejected, got Ok");
+        };
+        assert!(
+            matches!(e, FanoutError::DuplicateDevice(DeviceId(1))),
+            "duplicate DeviceId must be rejected with DuplicateDevice(1), got: {e:?}"
+        );
+    }
+
+    #[test]
+    fn establish_rejects_the_same_identity_under_two_device_ids() {
+        let sender = generate_identity_key_pair();
+        let shared = generate_identity_key_pair();
+        // Same identity, two different DeviceIds — the identity collides, not the id.
+        let devices = [(DeviceId(1), &shared), (DeviceId(2), &shared)];
+        let result = FanoutSession::establish(&sender, &devices);
+        let Err(e) = result else {
+            panic!("reused identity must be rejected, got Ok");
+        };
+        assert!(
+            matches!(e, FanoutError::DuplicateIdentity(DeviceId(1))),
+            "reused identity must be rejected with DuplicateIdentity(1), got: {e:?}"
+        );
+    }
+
+    #[test]
+    fn decrypt_as_rejects_an_identity_not_in_the_fanout() {
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+        let stranger = generate_identity_key_pair();
+
+        let mut fanout =
+            FanoutSession::establish(&sender, &[(DeviceId(1), &recipient)]).expect("establish");
+        let ciphertexts = fanout.encrypt_to_all(b"hi").expect("encrypt");
+        assert_eq!(ciphertexts.len(), 1);
+
+        // An identity the fan-out never linked must be refused, not decrypted.
+        let result = fanout.decrypt_as(&stranger, &ciphertexts[0]);
+        assert!(
+            matches!(result, Err(FanoutError::UnknownIdentity)),
+            "unknown identity must be rejected with UnknownIdentity, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn single_device_round_trips() {
+        // The "one" boundary: a fan-out with a single linked device must still produce
+        // exactly one ciphertext that the device can decrypt.
+        let sender = generate_identity_key_pair();
+        let recipient = generate_identity_key_pair();
+
+        let mut fanout =
+            FanoutSession::establish(&sender, &[(DeviceId(7), &recipient)]).expect("establish");
+        let ciphertexts = fanout.encrypt_to_all(b"only you").expect("encrypt");
+        assert_eq!(ciphertexts.len(), 1, "one ciphertext for one device");
+        assert_eq!(ciphertexts[0].device, DeviceId(7));
+
+        let opened = fanout
+            .decrypt_as(&recipient, &ciphertexts[0])
+            .expect("decrypt");
+        assert_eq!(opened, b"only you");
     }
 }
