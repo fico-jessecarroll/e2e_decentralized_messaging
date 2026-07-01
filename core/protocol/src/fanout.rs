@@ -163,7 +163,11 @@ pub enum FanoutError {
 /// device should use that directly; `decrypt_as` is here so a freshly-built fan-out
 /// (e.g. a test, or a transient receiver role) can decrypt without managing stores
 /// itself.
-#[derive(Debug)]
+// `Debug` is intentionally not derived: `DoubleRatchetSession` wraps a
+// `libsignal` in-memory store that does not implement `Debug`, and exposing the
+// raw ratchet bytes in a `Debug` printout would be a confidentiality regression.
+// The fan-out's identity-table and device ids *are* debug-printable via the
+// public `device_ids()` iterator if callers need to introspect state.
 pub struct FanoutSession {
     /// One outbound session per linked device, keyed by `DeviceId`.
     sender_sessions: BTreeMap<DeviceId, DoubleRatchetSession>,
@@ -220,13 +224,13 @@ impl FanoutSession {
             // PQXDH prekey bundle off it. That bundle is what the sender consumes via
             // PQXDH (`new_alice`); a tampered or stale bundle would surface as
             // `Establishment` here.
-            let mut receiver = block_on(DoubleRatchetSession::new_bob(recipient_identity))
+            let receiver = block_on(DoubleRatchetSession::new_bob(recipient_identity))
                 .map_err(|e| FanoutError::Establishment(*device_id, e))?;
             let bundle = receiver
                 .publish_bundle()
                 .map_err(|e| FanoutError::Establishment(*device_id, e))?;
 
-            let mut outbound =
+            let outbound =
                 block_on(DoubleRatchetSession::new_alice(sender, &bundle))
                     .map_err(|e| FanoutError::Establishment(*device_id, e))?;
 

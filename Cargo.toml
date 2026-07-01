@@ -29,8 +29,8 @@ rand = "0.9"
 # Crate-local path deps. Crate names in this workspace are the short names (`crypto`,
 # `protocol`, `transport`, `storage`) — not the directory names — so the protocol crate can
 # `use crypto::...` exactly the way its own tests do.
-crypto = { path = "core/crypto" }
-protocol = { path = "core/protocol" }
+crypto = { package = "core-crypto", path = "core/crypto" }
+protocol = { package = "core-protocol", path = "core/protocol" }
 
 # Pinned per docs/dependency-versions.md (Phase 2 "Storage" story). `bundled-sqlcipher-vendored-openssl`
 # statically links both SQLCipher and OpenSSL into the binary, so the encrypted-at-rest store has no
