@@ -15,6 +15,7 @@ use rand::TryRngCore;
 
 pub mod device_qr;
 pub mod double_ratchet;
+pub mod identity;
 pub mod prekey;
 pub mod ratchet_session;
 pub mod session;

@@ -16,6 +16,11 @@ qrcode = { version = "0.14", default-features = false }
 # address. Same minor version libsignal-protocol already pulls (see Cargo.lock), so this adds
 # no new compiled copy.
 sha2 = "0.10"
+# `session::establish_with_malformed_prekey` is a sync entry point (client shells call it without
+# already running inside an async runtime), but the PQXDH establishment it drives is async. A
+# current-thread runtime blocks on it in-process; `rt` is the only feature needed since nothing
+# it drives performs real I/O.
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

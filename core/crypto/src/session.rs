@@ -15,6 +15,8 @@ use libsignal_protocol::{
 use rand::{CryptoRng, Rng};
 use std::time::SystemTime;
 
+pub use crate::ratchet_session::SessionError;
+
 /// Generate a Kyber1024 pre-key, signed by `signing_key`, for inclusion in a PQXDH bundle.
 ///
 /// The signing key must be the holder's EC identity private key — the recipient verifies the
@@ -87,4 +89,79 @@ pub async fn establish_outbound_session<R: Rng + CryptoRng>(
         csprng,
     )
     .await
+}
+
+/// Deliberately attempt PQXDH session establishment against a bundle with a tampered
+/// signed-prekey signature, and return the resulting `Err` rather than panicking.
+///
+/// Exists so a client shell (e.g. the Tauri desktop shell, PLAN.md Phase 5) has a concrete,
+/// zero-setup way to exercise the "a malformed core input surfaces as a defined error state, not
+/// a crash" contract without assembling a full PQXDH handshake itself. The bundle is built from a
+/// real, freshly generated receiver session (via [`crate::ratchet_session::DoubleRatchetSession`])
+/// with its signed-prekey signature overwritten with zero bytes — the same tampering the
+/// `tampered_signed_prekey_signature_is_rejected` acceptance test exercises at the lower-level
+/// `establish_outbound_session` API.
+pub fn establish_with_malformed_prekey() -> Result<(), SessionError> {
+    use crate::ratchet_session::DoubleRatchetSession;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("building a current-thread tokio runtime cannot fail");
+
+    runtime.block_on(async {
+        let bob_identity = crate::generate_identity_key_pair();
+        let bob = DoubleRatchetSession::new_bob(&bob_identity).await?;
+        let bundle = bob.publish_bundle()?;
+
+        let one_time_prekey = bundle
+            .pre_key_id()
+            .map_err(SessionError::Establishment)?
+            .zip(bundle.pre_key_public().map_err(SessionError::Establishment)?);
+
+        let malformed_bundle = PreKeyBundle::new(
+            bundle.registration_id().map_err(SessionError::Establishment)?,
+            bundle.device_id().map_err(SessionError::Establishment)?,
+            one_time_prekey,
+            bundle
+                .signed_pre_key_id()
+                .map_err(SessionError::Establishment)?,
+            bundle
+                .signed_pre_key_public()
+                .map_err(SessionError::Establishment)?,
+            vec![0u8; 64], // deliberately malformed signed-prekey signature
+            bundle
+                .kyber_pre_key_id()
+                .map_err(SessionError::Establishment)?,
+            bundle
+                .kyber_pre_key_public()
+                .map_err(SessionError::Establishment)?
+                .clone(),
+            bundle
+                .kyber_pre_key_signature()
+                .map_err(SessionError::Establishment)?
+                .to_vec(),
+            *bundle.identity_key().map_err(SessionError::Establishment)?,
+        )
+        .map_err(SessionError::Establishment)?;
+
+        let alice_identity = crate::generate_identity_key_pair();
+        DoubleRatchetSession::new_alice(&alice_identity, &malformed_bundle)
+            .await
+            .map(|_| ())
+    })
+}
+
+#[cfg(test)]
+mod malformed_prekey_tests {
+    use super::establish_with_malformed_prekey;
+    use crate::ratchet_session::SessionError;
+
+    #[test]
+    fn malformed_signed_prekey_surfaces_as_an_error_not_a_panic() {
+        let result = establish_with_malformed_prekey();
+        assert!(
+            matches!(result, Err(SessionError::Establishment(_))),
+            "tampered signed-prekey signature must surface as Err, got: {result:?}"
+        );
+    }
 }
