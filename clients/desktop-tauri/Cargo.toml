@@ -1,0 +1,31 @@
+[package]
+name = "desktop-tauri"
+version.workspace = true
+edition.workspace = true
+description = "Tauri desktop shell — thin UI over the shared Rust core (PLAN.md Phase 5)"
+build = "build.rs"
+
+[lib]
+name = "desktop_tauri"
+path = "src-tauri/src/lib.rs"
+
+[[bin]]
+name = "desktop-tauri"
+path = "src-tauri/src/main.rs"
+
+[dependencies]
+# Path deps into the shared core, aliased to the names PLAN.md's Phase 5 story calls them by
+# (`core_crypto`/`core_protocol`/`core_transport`). The underlying crates are still named
+# `crypto`/`protocol`/`transport` (see their own Cargo.toml `[package] name`) — aliasing here is
+# how a downstream crate names its dependency, not a rename of the real crates, so it doesn't
+# touch any already-merged code or tests in `core/*`.
+core_crypto = { package = "crypto", path = "../../core/crypto" }
+core_protocol = { package = "protocol", path = "../../core/protocol" }
+core_transport = { package = "transport", path = "../../core/transport" }
+
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
