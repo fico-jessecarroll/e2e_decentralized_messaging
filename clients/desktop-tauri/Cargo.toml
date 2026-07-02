@@ -1,12 +1,12 @@
 [package]
-name = "desktop-tauri"
+name = "clients-desktop-tauri"
 version.workspace = true
 edition.workspace = true
 description = "Tauri desktop shell — thin UI over the shared Rust core (PLAN.md Phase 5)"
 build = "build.rs"
 
 [lib]
-name = "desktop_tauri"
+name = "clients_desktop_tauri"
 path = "src-tauri/src/lib.rs"
 
 [[bin]]
@@ -26,6 +26,7 @@ core_transport = { package = "transport", path = "../../core/transport" }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

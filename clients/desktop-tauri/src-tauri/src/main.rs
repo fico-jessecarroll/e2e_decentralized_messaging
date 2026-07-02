@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    desktop_tauri::run();
+    clients_desktop_tauri::run();
 }
