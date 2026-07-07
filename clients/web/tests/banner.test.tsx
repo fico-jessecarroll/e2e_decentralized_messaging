@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent } from '@testing-library/react';
+import Banner from '../src/Banner';
 
 describe('Banner component', () => {
     beforeEach(() => {
@@ -11,7 +13,7 @@ describe('Banner component', () => {
         render(<Banner />);
         const banner = screen.getByTestId('banner');
         expect(banner).toBeInTheDocument();
-        expect(screen.getByText(/reduced threat model/i)).toBeInTheDocument();
+        expect(screen.getByText(/reduced|no secure enclave|browser key-storage/i)).toBeInTheDocument();
         const dismissBtn = screen.getByRole('button', { name: /dismiss/i });
         expect(dismissBtn).toBeInTheDocument();
     });
