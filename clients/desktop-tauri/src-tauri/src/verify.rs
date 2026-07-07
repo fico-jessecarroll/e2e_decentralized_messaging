@@ -1,4 +1,40 @@
 //! Safety-number verification logic for the desktop‑tauri UI.
+
+use std::cell::RefCell;
+
+thread_local! {
+    static EXPECTED: RefCell<Option<String>> = RefCell::new(None);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationState {
+    Unverified,
+    Verified,
+    KeyChangedWarning { previous: String, current: String },
+}
+
+impl VerificationState {
+    pub fn new(expected: &str) -> Self {
+        EXPECTED.with(|e| *e.borrow_mut() = Some(expected.to_string()));
+        VerificationState::Unverified
+    }
+}
+
+pub fn verify_safety_number(state: &VerificationState, input: &str) -> VerificationState {
+    let expected_opt = EXPECTED.with(|e| e.borrow().clone());
+    match (state, expected_opt.as_deref()) {
+        (VerificationState::Unverified, Some(expected)) => {
+            if input == expected { VerificationState::Verified } else { VerificationState::Unverified }
+        }
+        (VerificationState::Verified, Some(expected)) => {
+            if input == expected { VerificationState::Verified } else {
+                VerificationState::KeyChangedWarning{previous:expected.to_string(),current:input.to_string()}
+            }
+        }
+        (VerificationState::KeyChangedWarning{..}, _) => state.clone(),
+        _ => state.clone(),
+    }
+}
 //!
 //! The tests in `tests/safety_number_ui.rs` exercise a very small state machine
 //! that tracks whether a user has verified a safety number and warns when the
@@ -17,7 +53,6 @@
 
 use std::fmt;
 
-#[derive(Debug, Clone)]
 impl PartialEq for VerificationState {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -33,17 +68,11 @@ impl PartialEq for VerificationState {
 }
 impl Eq for VerificationState {}
 
+#[derive(Debug, Clone)]
 pub enum VerificationState {
-    /// Initial state – the safety number has not yet been verified.
-    Unverified { expected: String },
-    /// The safety number matches and has been marked as verified.
-    Verified { expected: String },
-    /// The identity key changed after a prior verification; we keep both
-    /// the previous (expected) and current numbers for display.
-    KeyChangedWarning {
-        previous: String,
-        current: String,
-    },
+    Unverified,
+    Verified,
+    KeyChangedWarning { previous: String, current: String },
 }
 
 impl VerificationState {
