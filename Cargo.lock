@@ -6514,7 +6514,6 @@ dependencies = [
 name = "uniffi-bindings"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "crypto",
  "thiserror 1.0.69",
  "uniffi",

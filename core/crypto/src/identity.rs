@@ -90,6 +90,18 @@ impl IdentityKeyPair {
 pub struct PublicIdentityKey(Box<[u8]>);
 
 impl PublicIdentityKey {
+    /// Wrap raw bytes as a public identity key, without validating their structure.
+    ///
+    /// This constructor is intentionally infallible: [`seal`](Self::seal) already validates the
+    /// bytes (via `IdentityKey::decode`) before using them and returns [`SealError::Malformed`]
+    /// for anything that isn't a well-formed type-tagged Curve25519 point, so there is no need
+    /// to duplicate that check here. Prefer constructing via [`IdentityKeyPair::public`] when you
+    /// hold the keypair directly; use this only when a key arrives as opaque bytes (e.g. across
+    /// an FFI boundary).
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(bytes.into())
+    }
+
     /// The serialized public key bytes (1-byte key-type tag + 32-byte point).
     pub fn to_bytes(&self) -> Vec<u8> {
         self.0.to_vec()
@@ -162,7 +174,7 @@ impl std::error::Error for SealError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentityKeyPair, SealError, MIN_SEALED_LEN};
+    use super::{IdentityKeyPair, PublicIdentityKey, SealError, MIN_SEALED_LEN};
 
     #[test]
     fn generate_produces_nonempty_public_bytes() {
@@ -228,5 +240,24 @@ mod tests {
         let a = recipient.public().seal(b"chain key").unwrap();
         let b = recipient.public().seal(b"chain key").unwrap();
         assert_ne!(a, b, "fresh ephemeral key per seal() call must randomize the ciphertext");
+    }
+
+    #[test]
+    fn from_bytes_round_trips_through_seal_for_a_well_formed_key() {
+        let recipient = IdentityKeyPair::generate();
+        let key_bytes = recipient.public().to_bytes();
+
+        let reconstructed = PublicIdentityKey::from_bytes(&key_bytes);
+        let sealed = reconstructed.seal(b"payload").unwrap();
+
+        assert_eq!(recipient.open_sealed(&sealed).unwrap(), b"payload");
+    }
+
+    #[test]
+    fn from_bytes_with_garbage_fails_at_seal_not_at_construction() {
+        // from_bytes is intentionally infallible; malformed bytes surface as a SealError only
+        // once seal() actually tries to decode them.
+        let garbage = PublicIdentityKey::from_bytes(&[0xFFu8; 16]);
+        assert!(matches!(garbage.seal(b"x"), Err(SealError::Malformed)));
     }
 }
