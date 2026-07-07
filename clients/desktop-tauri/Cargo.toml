@@ -22,6 +22,7 @@ path = "src-tauri/src/main.rs"
 core_crypto = { package = "crypto", path = "../../core/crypto" }
 core_protocol = { package = "protocol", path = "../../core/protocol" }
 core_transport = { package = "transport", path = "../../core/transport" }
+core_storage = { package = "storage", path = "../../core/storage" }
 
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }

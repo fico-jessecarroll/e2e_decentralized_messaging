@@ -678,6 +678,7 @@ dependencies = [
  "protocol",
  "serde",
  "serde_json",
+ "storage",
  "tauri",
  "tauri-build",
  "tokio",

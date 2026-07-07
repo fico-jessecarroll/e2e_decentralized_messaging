@@ -8,6 +8,7 @@ mod commands;
 mod error;
 pub mod ui;
 pub mod verify;
+    pub mod backup;
 
 pub use error::ShellError;
 
