@@ -33,7 +33,7 @@ pub fn restore_backup(passphrase: &[u8], blob: &[u8]) -> Result<Vec<Vec<u8>>, Re
     match import(passphrase, blob) {
         Ok(records) => Ok(records),
         Err(e) => match e {
-            BackupError::Tampered | BackupError::Malformed => {
+            BackupError::Tampered | BackupError::Empty => {
                 // Structural corruption – treat as incomplete.
                 Err(RestoreError::IncompleteBackup)
             }

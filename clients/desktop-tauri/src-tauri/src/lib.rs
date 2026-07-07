@@ -8,9 +8,9 @@ mod commands;
 mod error;
 pub mod ui;
 pub mod verify;
-    pub mod backup;
+pub mod backup;
 
-pub use error::ShellError;
+pub use verify::{VerificationState, verify_safety_number, describe_verification_flow_for_user, VerificationFlowDoc};
 
 /// Build and run the Tauri application.
 pub fn run() {
