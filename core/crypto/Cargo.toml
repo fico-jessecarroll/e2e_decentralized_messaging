@@ -21,6 +21,15 @@ sha2 = "0.10"
 # current-thread runtime blocks on it in-process; `rt` is the only feature needed since nothing
 # it drives performs real I/O.
 tokio = { version = "1", features = ["rt"] }
+# identity::seal_to/open_sealed: ephemeral-static ECDH + HKDF + AEAD sealing of arbitrary bytes
+# to a PublicIdentityKey, so callers (e.g. protocol::group's per-member sender-key wrapper) never
+# need to hand-roll crypto. Same construction and crate choices as
+# core/transport/src/sealed_sender.rs (hkdf + chacha20poly1305), duplicated here rather than
+# depending on `transport` from `crypto` to avoid a layering inversion (transport already depends
+# on crypto).
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+zeroize = "1.9.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

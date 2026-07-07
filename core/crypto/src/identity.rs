@@ -4,9 +4,32 @@
 //!
 //! No crypto is reimplemented here — [`IdentityKeyPair::generate`] delegates to
 //! [`crate::generate_identity_key_pair`], the same CSPRNG-backed Curve25519 keypair generator the
-//! rest of this crate uses.
+//! rest of this crate uses. [`PublicIdentityKey::seal`]/[`IdentityKeyPair::open_sealed`] use the
+//! same ephemeral-static ECDH + HKDF-SHA256 + AEAD construction as
+//! `core/transport/src/sealed_sender.rs` — an observer of a sealed blob learns nothing about its
+//! contents without the recipient's private identity key.
+
+use chacha20poly1305::aead::{Aead, Payload};
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
+use hkdf::Hkdf;
+use libsignal_protocol::{IdentityKey, KeyPair, PublicKey};
+use rand::rngs::OsRng;
+use rand::{Rng, TryRngCore};
+use sha2::Sha256;
+use zeroize::Zeroize;
 
 use crate::generate_identity_key_pair;
+
+/// HKDF salt for [`PublicIdentityKey::seal`]/[`IdentityKeyPair::open_sealed`] — a fixed
+/// domain-separation string distinct from `sealed_sender.rs`'s `"SealedSender-v1"` so a key
+/// derived for one purpose can never be confused with a key derived for the other, even though
+/// both start from the same kind of ECDH shared secret.
+const SEAL_HKDF_SALT: &[u8] = b"IdentitySeal-v1";
+const KEY_LEN: usize = 32;
+const EPH_PUB_LEN: usize = 32;
+const NONCE_LEN: usize = 12;
+const TAG_LEN: usize = 16;
+const MIN_SEALED_LEN: usize = EPH_PUB_LEN + NONCE_LEN + TAG_LEN;
 
 /// A Curve25519 identity keypair.
 pub struct IdentityKeyPair(libsignal_protocol::IdentityKeyPair);
@@ -21,6 +44,45 @@ impl IdentityKeyPair {
     pub fn public(&self) -> PublicIdentityKey {
         PublicIdentityKey(self.0.identity_key().serialize())
     }
+
+    /// Open a blob previously sealed to this keypair's public key with [`PublicIdentityKey::seal`].
+    ///
+    /// Fails closed: any structural or authentication failure returns [`SealError`] and no
+    /// plaintext. A wrong recipient (not the intended holder) derives a different shared secret,
+    /// which the AEAD step rejects — indistinguishable from a tampered blob, which is a feature,
+    /// not a limitation (see `sealed_sender.rs`'s failure-model note).
+    pub fn open_sealed(&self, sealed: &[u8]) -> Result<Vec<u8>, SealError> {
+        if sealed.len() < MIN_SEALED_LEN {
+            return Err(SealError::Malformed);
+        }
+        let eph_pub_bytes = &sealed[..EPH_PUB_LEN];
+        let nonce_bytes = &sealed[EPH_PUB_LEN..EPH_PUB_LEN + NONCE_LEN];
+        let ciphertext = &sealed[EPH_PUB_LEN + NONCE_LEN..];
+
+        let eph_pub = PublicKey::from_djb_public_key_bytes(eph_pub_bytes)
+            .map_err(|_| SealError::Malformed)?;
+        let recipient_priv = self.0.private_key();
+        let shared = recipient_priv
+            .calculate_agreement(&eph_pub)
+            .map_err(|_| SealError::Malformed)?;
+
+        let mut key = [0u8; KEY_LEN];
+        Hkdf::<Sha256>::new(Some(SEAL_HKDF_SALT), &shared)
+            .expand(eph_pub_bytes, &mut key)
+            .map_err(|_| SealError::DecryptionFailed)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .expect("ChaCha20-Poly1305 accepts any 32-byte key");
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let plaintext = cipher
+            .decrypt(nonce, Payload { msg: ciphertext, aad: eph_pub_bytes })
+            .map_err(|_| SealError::DecryptionFailed);
+
+        key.zeroize();
+        let mut shared = shared;
+        shared.zeroize();
+
+        plaintext
+    }
 }
 
 /// The public half of an [`IdentityKeyPair`]: a type-tagged Curve25519 point.
@@ -32,11 +94,75 @@ impl PublicIdentityKey {
     pub fn to_bytes(&self) -> Vec<u8> {
         self.0.to_vec()
     }
+
+    /// Seal `plaintext` so that only the holder of the matching private identity key can recover
+    /// it via [`IdentityKeyPair::open_sealed`]. An observer of the sealed bytes (e.g. a relay, or
+    /// anyone reading a wire-format frame this blob is embedded in) learns nothing about
+    /// `plaintext` — the ephemeral key is fresh per call, so sealing the same plaintext twice
+    /// produces unlinkable ciphertexts.
+    pub fn seal(&self, plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
+        let recipient = IdentityKey::decode(&self.0).map_err(|_| SealError::Malformed)?;
+
+        let mut rng = OsRng.unwrap_err();
+        let eph = KeyPair::generate(&mut rng);
+        let eph_pub_bytes = eph.public_key.public_key_bytes();
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        rng.fill(&mut nonce_bytes);
+
+        let shared = eph
+            .private_key
+            .calculate_agreement(recipient.public_key())
+            .map_err(|_| SealError::Malformed)?;
+
+        let mut key = [0u8; KEY_LEN];
+        Hkdf::<Sha256>::new(Some(SEAL_HKDF_SALT), &shared)
+            .expand(eph_pub_bytes, &mut key)
+            .map_err(|_| SealError::DecryptionFailed)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .expect("ChaCha20-Poly1305 accepts any 32-byte key");
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(nonce, Payload { msg: plaintext, aad: eph_pub_bytes })
+            .map_err(|_| SealError::DecryptionFailed)?;
+
+        let mut out = Vec::with_capacity(EPH_PUB_LEN + NONCE_LEN + ciphertext.len());
+        out.extend_from_slice(eph_pub_bytes);
+        out.extend_from_slice(&nonce_bytes);
+        out.extend_from_slice(&ciphertext);
+
+        key.zeroize();
+        let mut shared = shared;
+        shared.zeroize();
+
+        Ok(out)
+    }
 }
+
+/// Errors raised by [`PublicIdentityKey::seal`]/[`IdentityKeyPair::open_sealed`]. All variants
+/// fail closed: no plaintext is ever returned on any error path.
+#[derive(Debug)]
+pub enum SealError {
+    /// The sealed blob (or the recipient's own serialized public key) was structurally invalid.
+    Malformed,
+    /// The AEAD rejected the ciphertext: wrong recipient key or tampered bytes. The two cases are
+    /// intentionally indistinguishable (see `sealed_sender.rs`'s failure-model note).
+    DecryptionFailed,
+}
+
+impl std::fmt::Display for SealError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed => write!(f, "sealed identity blob is structurally malformed"),
+            Self::DecryptionFailed => write!(f, "sealed identity blob decryption failed"),
+        }
+    }
+}
+
+impl std::error::Error for SealError {}
 
 #[cfg(test)]
 mod tests {
-    use super::IdentityKeyPair;
+    use super::{IdentityKeyPair, SealError, MIN_SEALED_LEN};
 
     #[test]
     fn generate_produces_nonempty_public_bytes() {
@@ -49,5 +175,58 @@ mod tests {
         let a = IdentityKeyPair::generate();
         let b = IdentityKeyPair::generate();
         assert_ne!(a.public().to_bytes(), b.public().to_bytes());
+    }
+
+    #[test]
+    fn sealed_blob_round_trips_for_the_intended_recipient() {
+        let recipient = IdentityKeyPair::generate();
+        let sealed = recipient.public().seal(b"secret chain key material").unwrap();
+        let opened = recipient.open_sealed(&sealed).unwrap();
+        assert_eq!(opened, b"secret chain key material");
+    }
+
+    #[test]
+    fn sealed_blob_does_not_expose_the_plaintext_in_its_bytes() {
+        // The whole point of sealing: an observer of the wire bytes must not be able to find the
+        // plaintext by inspection, unlike the previous plaintext-chain-key wire format.
+        let recipient = IdentityKeyPair::generate();
+        let secret = b"super-secret-32-byte-chain-key!";
+        let sealed = recipient.public().seal(secret).unwrap();
+        assert!(
+            !sealed.windows(secret.len()).any(|w| w == &secret[..]),
+            "sealed blob must not contain the plaintext as a readable substring"
+        );
+    }
+
+    #[test]
+    fn non_recipient_cannot_open_a_sealed_blob() {
+        let recipient = IdentityKeyPair::generate();
+        let attacker = IdentityKeyPair::generate();
+        let sealed = recipient.public().seal(b"chain key").unwrap();
+        assert!(attacker.open_sealed(&sealed).is_err());
+    }
+
+    #[test]
+    fn truncated_sealed_blob_is_malformed() {
+        let recipient = IdentityKeyPair::generate();
+        let short = vec![0u8; MIN_SEALED_LEN - 1];
+        assert!(matches!(recipient.open_sealed(&short), Err(SealError::Malformed)));
+    }
+
+    #[test]
+    fn bit_flipped_sealed_blob_fails_authentication() {
+        let recipient = IdentityKeyPair::generate();
+        let mut sealed = recipient.public().seal(b"chain key").unwrap();
+        let last = sealed.len() - 1;
+        sealed[last] ^= 0x01;
+        assert!(recipient.open_sealed(&sealed).is_err());
+    }
+
+    #[test]
+    fn sealing_the_same_plaintext_twice_produces_unlinkable_ciphertexts() {
+        let recipient = IdentityKeyPair::generate();
+        let a = recipient.public().seal(b"chain key").unwrap();
+        let b = recipient.public().seal(b"chain key").unwrap();
+        assert_ne!(a, b, "fresh ephemeral key per seal() call must randomize the ciphertext");
     }
 }
