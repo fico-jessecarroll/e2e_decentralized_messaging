@@ -9,6 +9,7 @@ members = [
     "core/bindings/wasm",
     "relay",
     "clients/desktop-tauri",
+    "docs/audit",
 ]
 
 [workspace.package]
