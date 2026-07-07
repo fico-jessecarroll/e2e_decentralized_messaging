@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Errors returned by the blind store-and-forward.
@@ -16,6 +16,12 @@ pub struct RelayStore {
     inner: Mutex<HashMap<String, (Vec<u8>, Instant)>>,
 }
 
+impl Default for RelayStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RelayStore {
     /// Create a new empty store.
     pub fn new() -> Self {
@@ -25,7 +31,12 @@ impl RelayStore {
     }
 
     /// Store an envelope for the given recipient with a TTL.
-    pub fn store(&self, recipient_id: &str, envelope: Vec<u8>, ttl: Duration) -> Result<(), ()> {
+    pub fn store(
+        &self,
+        recipient_id: &str,
+        envelope: Vec<u8>,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
         let expiry = Instant::now() + ttl;
         let mut map = self.inner.lock().unwrap();
         map.insert(recipient_id.to_string(), (envelope, expiry));
@@ -51,7 +62,7 @@ impl RelayStore {
     }
 
     /// Purge the stored envelope for a recipient regardless of TTL.
-    pub fn purge(&self, recipient_id: &str) -> Result<(), ()> {
+    pub fn purge(&self, recipient_id: &str) -> Result<(), StoreError> {
         let mut map = self.inner.lock().unwrap();
         map.remove(recipient_id);
         Ok(())
@@ -65,9 +76,6 @@ impl RelayStore {
 
     /// Introspect whether a public method is exposed.
     pub fn has_method(name: &str) -> bool {
-        match name {
-            "store" | "pickup" | "purge" | "count" => true,
-            _ => false,
-        }
+        matches!(name, "store" | "pickup" | "purge" | "count")
     }
 }

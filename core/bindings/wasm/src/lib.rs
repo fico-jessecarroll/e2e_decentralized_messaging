@@ -17,7 +17,9 @@ pub mod api {
     }
 
     pub fn generate_identity() -> IdentityHandle {
-        IdentityHandle { inner: IdentityKeyPair::generate() }
+        IdentityHandle {
+            inner: IdentityKeyPair::generate(),
+        }
     }
 
     /// The browser's key-storage security model, as distinct from a native client's.

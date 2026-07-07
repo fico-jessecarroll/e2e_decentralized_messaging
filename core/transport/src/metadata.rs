@@ -6,7 +6,6 @@
 /// DHT peer IDs, lookup timing, relay store TTLs, packet sizes, and key
 /// rotation cadence. It is used by tests to ensure that the analysis exists
 /// and mentions "dht" in a lower‑cased form.
-
 pub fn document_observable_metadata() -> String {
     let mut s = String::new();
     // DHT layer: peer IDs, lookup timing

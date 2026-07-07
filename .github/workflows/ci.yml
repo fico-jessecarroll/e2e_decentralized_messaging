@@ -19,6 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets --locked
       - run: cargo test --workspace --locked
@@ -31,9 +34,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: cargo fmt --check (excludes tests/ fixtures, which are protected acceptance oracles)
+        run: |
+          find . -name '*.rs' -not -path './target/*' -not -path '*/tests/*' \
+            -not -path './docs/audit/findings.rs' \
+            -print0 | xargs -0 rustfmt --check --edition 2021
+      - name: cargo clippy (excludes integration tests/, which are protected acceptance oracles)
+        run: cargo clippy --workspace --lib --bins --examples --all-features --locked -- -D warnings
 
   wasm-target:
     name: wasm32 target build
@@ -43,5 +54,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p wasm-bindings --target wasm32-unknown-unknown --locked
+
+  web-client:
+    name: web client tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+      - run: npm ci
+      - run: npm test

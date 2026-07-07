@@ -74,7 +74,13 @@ impl IdentityKeyPair {
             .expect("ChaCha20-Poly1305 accepts any 32-byte key");
         let nonce = Nonce::from_slice(nonce_bytes);
         let plaintext = cipher
-            .decrypt(nonce, Payload { msg: ciphertext, aad: eph_pub_bytes })
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: eph_pub_bytes,
+                },
+            )
             .map_err(|_| SealError::DecryptionFailed);
 
         key.zeroize();
@@ -134,7 +140,13 @@ impl PublicIdentityKey {
             .expect("ChaCha20-Poly1305 accepts any 32-byte key");
         let nonce = Nonce::from_slice(&nonce_bytes);
         let ciphertext = cipher
-            .encrypt(nonce, Payload { msg: plaintext, aad: eph_pub_bytes })
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: plaintext,
+                    aad: eph_pub_bytes,
+                },
+            )
             .map_err(|_| SealError::DecryptionFailed)?;
 
         let mut out = Vec::with_capacity(EPH_PUB_LEN + NONCE_LEN + ciphertext.len());
@@ -192,7 +204,10 @@ mod tests {
     #[test]
     fn sealed_blob_round_trips_for_the_intended_recipient() {
         let recipient = IdentityKeyPair::generate();
-        let sealed = recipient.public().seal(b"secret chain key material").unwrap();
+        let sealed = recipient
+            .public()
+            .seal(b"secret chain key material")
+            .unwrap();
         let opened = recipient.open_sealed(&sealed).unwrap();
         assert_eq!(opened, b"secret chain key material");
     }
@@ -222,7 +237,10 @@ mod tests {
     fn truncated_sealed_blob_is_malformed() {
         let recipient = IdentityKeyPair::generate();
         let short = vec![0u8; MIN_SEALED_LEN - 1];
-        assert!(matches!(recipient.open_sealed(&short), Err(SealError::Malformed)));
+        assert!(matches!(
+            recipient.open_sealed(&short),
+            Err(SealError::Malformed)
+        ));
     }
 
     #[test]
@@ -239,7 +257,10 @@ mod tests {
         let recipient = IdentityKeyPair::generate();
         let a = recipient.public().seal(b"chain key").unwrap();
         let b = recipient.public().seal(b"chain key").unwrap();
-        assert_ne!(a, b, "fresh ephemeral key per seal() call must randomize the ciphertext");
+        assert_ne!(
+            a, b,
+            "fresh ephemeral key per seal() call must randomize the ciphertext"
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 
 thread_local! {
-    static EXPECTED: RefCell<Option<String>> = RefCell::new(None);
+    static EXPECTED: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +48,10 @@ pub fn verify_safety_number(state: &VerificationState, input: &str) -> Verificat
             if input == expected {
                 VerificationState::Verified
             } else {
-                VerificationState::KeyChangedWarning { previous: expected, current: input.to_string() }
+                VerificationState::KeyChangedWarning {
+                    previous: expected,
+                    current: input.to_string(),
+                }
             }
         }
         (VerificationState::KeyChangedWarning { .. }, _) | (_, None) => state.clone(),

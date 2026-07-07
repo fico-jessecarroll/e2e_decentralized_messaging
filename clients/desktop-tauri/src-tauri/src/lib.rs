@@ -4,13 +4,16 @@
 //! dependencies (see `Cargo.toml`); no core logic is reimplemented in Rust, TypeScript, or
 //! JavaScript here.
 
+pub mod backup;
 mod commands;
 mod error;
 pub mod ui;
 pub mod verify;
-pub mod backup;
 
-pub use verify::{VerificationState, verify_safety_number, describe_verification_flow_for_user, VerificationFlowDoc};
+pub use verify::{
+    describe_verification_flow_for_user, verify_safety_number, VerificationFlowDoc,
+    VerificationState,
+};
 
 /// Build and run the Tauri application.
 pub fn run() {

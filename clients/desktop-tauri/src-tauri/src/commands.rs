@@ -59,7 +59,9 @@ mod tests {
 
         assert_eq!(json["kind"], "Session");
         assert!(
-            json["message"].as_str().is_some_and(|message| !message.is_empty()),
+            json["message"]
+                .as_str()
+                .is_some_and(|message| !message.is_empty()),
             "serialized error must carry a non-empty message, got: {json}"
         );
     }

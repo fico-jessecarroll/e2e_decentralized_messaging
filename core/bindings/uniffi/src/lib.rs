@@ -17,7 +17,9 @@ pub mod api {
     }
 
     pub fn generate_identity() -> IdentityHandle {
-        IdentityHandle { inner: IdentityKeyPair::generate() }
+        IdentityHandle {
+            inner: IdentityKeyPair::generate(),
+        }
     }
 
     #[derive(Debug, thiserror::Error)]

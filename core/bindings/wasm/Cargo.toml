@@ -10,3 +10,10 @@ path = "src/lib.rs"
 
 [dependencies]
 crypto = { path = "../../crypto" }
+
+# libsignal-protocol pulls in getrandom 0.2 transitively (via rand_core 0.6). That
+# version has no default source of randomness on wasm32-unknown-unknown and fails
+# to compile unless the `js` backend (browser Web Crypto API, via wasm-bindgen) is
+# enabled explicitly.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

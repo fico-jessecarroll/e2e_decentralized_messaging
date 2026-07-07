@@ -156,7 +156,10 @@ impl GroupSession {
         let hk = Hkdf::<Sha256>::new(None, &sender_pub.to_bytes());
         let mut ck = [0u8; 32];
         hk.expand(b"chain", &mut ck).expect("hkdf expand chain");
-        Self { members: Vec::new(), chain_key: Cell::new(ck) }
+        Self {
+            members: Vec::new(),
+            chain_key: Cell::new(ck),
+        }
     }
 
     /// Add a member to the group.
@@ -193,7 +196,9 @@ impl GroupSession {
     /// has a legitimate use case (routine key hygiene), so it is not folded into another method.
     pub fn rotate_sender_key(self) -> Self {
         let mut fresh = [0u8; 32];
-        OsRng.try_fill_bytes(&mut fresh).expect("OS CSPRNG must be available");
+        OsRng
+            .try_fill_bytes(&mut fresh)
+            .expect("OS CSPRNG must be available");
         self.chain_key.set(fresh);
         fresh.zeroize();
         self
@@ -237,7 +242,10 @@ impl GroupSession {
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, std::io::Error> {
         if ciphertext.len() < 12 + 4 + 1 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "ciphertext too short"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ciphertext too short",
+            ));
         }
         let nonce_bytes: [u8; 12] = ciphertext[0..12].try_into().unwrap();
 
@@ -249,11 +257,15 @@ impl GroupSession {
         // mismatch that would obscure the actual security property under test.
         let hk = Hkdf::<Sha256>::new(None, sender_key);
         let mut key_bytes = [0u8; 32];
-        hk.expand(b"msg", &mut key_bytes).expect("hkdf expand msg key");
+        hk.expand(b"msg", &mut key_bytes)
+            .expect("hkdf expand msg key");
 
         let payload_len = u32::from_le_bytes(ciphertext[12..16].try_into().unwrap()) as usize;
         if ciphertext.len() < 16 + payload_len {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "payload length mismatch"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "payload length mismatch",
+            ));
         }
         let payload = &ciphertext[16..16 + payload_len];
 
@@ -284,7 +296,10 @@ impl GroupSession {
         if self.members.len() > MAX_MEMBERS {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("group has {} members, exceeding the wire format's {MAX_MEMBERS}-member limit", self.members.len()),
+                format!(
+                    "group has {} members, exceeding the wire format's {MAX_MEMBERS}-member limit",
+                    self.members.len()
+                ),
             ));
         }
 
@@ -297,11 +312,14 @@ impl GroupSession {
         let current_chain_key = self.chain_key.get();
         let hk = Hkdf::<Sha256>::new(None, &current_chain_key);
         let mut key_bytes = [0u8; 32];
-        hk.expand(b"msg", &mut key_bytes).expect("hkdf expand msg key");
+        hk.expand(b"msg", &mut key_bytes)
+            .expect("hkdf expand msg key");
         let mut nonce_bytes = [0u8; 12];
-        hk.expand(b"nonce", &mut nonce_bytes).expect("hkdf expand nonce");
+        hk.expand(b"nonce", &mut nonce_bytes)
+            .expect("hkdf expand nonce");
         let mut next_chain_key = [0u8; 32];
-        hk.expand(b"chain-ratchet", &mut next_chain_key).expect("hkdf expand next chain key");
+        hk.expand(b"chain-ratchet", &mut next_chain_key)
+            .expect("hkdf expand next chain key");
         self.chain_key.set(next_chain_key);
         next_chain_key.zeroize();
 
@@ -347,17 +365,27 @@ impl GroupSession {
     /// Fails if `caller` is not addressed by any wrapper, or — for a [`NonMember`], which holds
     /// no private key — even when its public key happens to match a wrapper (that case cannot
     /// arise via this crate's API, but `open_sealed` fails closed regardless).
-    pub fn decrypt_as<C: Caller>(&self, caller: C, ciphertext: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    pub fn decrypt_as<C: Caller>(
+        &self,
+        caller: C,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, std::io::Error> {
         let mut pos = 0;
         if ciphertext.len() < 12 + 4 + 1 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "ciphertext too short"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ciphertext too short",
+            ));
         }
         let nonce_bytes: [u8; 12] = ciphertext[pos..pos + 12].try_into().unwrap();
         pos += 12;
         let payload_len = u32::from_le_bytes(ciphertext[pos..pos + 4].try_into().unwrap()) as usize;
         pos += 4;
         if ciphertext.len() < pos + payload_len + 1 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "payload length mismatch"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "payload length mismatch",
+            ));
         }
         let payload = &ciphertext[pos..pos + payload_len];
         pos += payload_len;
@@ -368,14 +396,21 @@ impl GroupSession {
         let mut found_sealed: Option<&[u8]> = None;
         for _ in 0..wrapper_count {
             if pos + 33 + 2 > ciphertext.len() {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "wrapper truncated"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "wrapper truncated",
+                ));
             }
             let pubkey_bytes = &ciphertext[pos..pos + 33];
             pos += 33;
-            let sealed_len = u16::from_le_bytes(ciphertext[pos..pos + 2].try_into().unwrap()) as usize;
+            let sealed_len =
+                u16::from_le_bytes(ciphertext[pos..pos + 2].try_into().unwrap()) as usize;
             pos += 2;
             if pos + sealed_len > ciphertext.len() {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "sealed wrapper truncated"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "sealed wrapper truncated",
+                ));
             }
             let sealed_bytes = &ciphertext[pos..pos + sealed_len];
             pos += sealed_len;
@@ -431,7 +466,9 @@ mod tests {
         // it, so we can independently recompute what this message's key/nonce/next-chain-key
         // actually were and assert none of them appear on the wire.
         let pre_chain_key = group.chain_key.get();
-        let ciphertext = group.encrypt_as(&sender, b"attacker reads these bytes").unwrap();
+        let ciphertext = group
+            .encrypt_as(&sender, b"attacker reads these bytes")
+            .unwrap();
 
         let hk = Hkdf::<Sha256>::new(None, &pre_chain_key);
         let mut key_bytes = [0u8; 32];
@@ -475,7 +512,10 @@ mod tests {
         let ct2 = group.encrypt_as(&sender, b"message two").unwrap();
         let nonce1 = &ct1[0..12];
         let nonce2 = &ct2[0..12];
-        assert_ne!(nonce1, nonce2, "each encrypt_as call must ratchet to a fresh nonce");
+        assert_ne!(
+            nonce1, nonce2,
+            "each encrypt_as call must ratchet to a fresh nonce"
+        );
 
         // Same plaintext length ("message one"/"message two" are both 11 bytes) under different
         // keys/nonces must not merely differ byte-for-byte by coincidence of plaintext content —
@@ -501,7 +541,10 @@ mod tests {
         }
         assert_eq!(group.members.len(), MAX_MEMBERS + 1);
         let result = group.encrypt_as(&sender, b"too many members");
-        assert!(result.is_err(), "encrypt_as must reject a group over the wire format's member limit");
+        assert!(
+            result.is_err(),
+            "encrypt_as must reject a group over the wire format's member limit"
+        );
     }
 
     #[test]
@@ -560,7 +603,8 @@ mod tests {
         // If rotation were just another ratchet step, this would match.
         let hk = Hkdf::<Sha256>::new(None, &pre_rotation_key);
         let mut would_be_ratcheted = [0u8; 32];
-        hk.expand(b"chain-ratchet", &mut would_be_ratcheted).unwrap();
+        hk.expand(b"chain-ratchet", &mut would_be_ratcheted)
+            .unwrap();
         assert_ne!(
             post_rotation_key, would_be_ratcheted,
             "rotate_sender_key must NOT be equivalent to one more encrypt_as ratchet step \
@@ -569,7 +613,8 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_members_captured_chain_key_cannot_decrypt_any_message_after_rotation_even_several_messages_later() {
+    fn a_removed_members_captured_chain_key_cannot_decrypt_any_message_after_rotation_even_several_messages_later(
+    ) {
         // Stronger than the acceptance test: confirms the captured-old-key attack fails not just
         // for the very next message post-rotation, but for messages arbitrarily far after it —
         // i.e. rotation is a hard break, not something a stale key could catch up to by
@@ -589,7 +634,9 @@ mod tests {
 
         // Several messages after rotation, not just the first one.
         for i in 0..5 {
-            let ciphertext = group.encrypt_as(&sender, format!("message {i}").as_bytes()).unwrap();
+            let ciphertext = group
+                .encrypt_as(&sender, format!("message {i}").as_bytes())
+                .unwrap();
             assert!(
                 group.try_decrypt_with_sender_key(&eve_captured_key, &ciphertext).is_err(),
                 "captured pre-rotation key must never decrypt, including message {i} several steps after rotation"
@@ -619,7 +666,9 @@ mod tests {
         group = group.remove_member(GroupMember(eve.public()));
         // No separate rotate_sender_key() call — remove_member alone must be sufficient.
 
-        let ciphertext = group.encrypt_as(&sender, b"removed and already protected").unwrap();
+        let ciphertext = group
+            .encrypt_as(&sender, b"removed and already protected")
+            .unwrap();
 
         // Eve is gone from the wrapper list, so the ordinary decrypt_as path fails...
         assert!(group.decrypt_as(&eve, &ciphertext).is_err());
@@ -627,7 +676,9 @@ mod tests {
         // ...AND her captured chain key can no longer ratchet forward to this message's key,
         // because remove_member already rotated to a CSPRNG-fresh, unrelated chain key.
         assert!(
-            group.try_decrypt_with_sender_key(&eve_captured_key, &ciphertext).is_err(),
+            group
+                .try_decrypt_with_sender_key(&eve_captured_key, &ciphertext)
+                .is_err(),
             "remove_member alone must invalidate a captured chain key, with no separate \
              rotate_sender_key call required"
         );

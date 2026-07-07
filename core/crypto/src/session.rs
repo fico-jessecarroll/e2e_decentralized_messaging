@@ -116,10 +116,16 @@ pub fn establish_with_malformed_prekey() -> Result<(), SessionError> {
         let one_time_prekey = bundle
             .pre_key_id()
             .map_err(SessionError::Establishment)?
-            .zip(bundle.pre_key_public().map_err(SessionError::Establishment)?);
+            .zip(
+                bundle
+                    .pre_key_public()
+                    .map_err(SessionError::Establishment)?,
+            );
 
         let malformed_bundle = PreKeyBundle::new(
-            bundle.registration_id().map_err(SessionError::Establishment)?,
+            bundle
+                .registration_id()
+                .map_err(SessionError::Establishment)?,
             bundle.device_id().map_err(SessionError::Establishment)?,
             one_time_prekey,
             bundle

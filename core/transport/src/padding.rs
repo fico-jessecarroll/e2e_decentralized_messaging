@@ -16,7 +16,11 @@ impl PaddedSizes {
     /// if it exceeds every predefined bucket (no further padding beyond the
     /// largest tier).
     pub fn bucket_of(len: usize) -> usize {
-        Self::BUCKETS.iter().copied().find(|&b| len <= b).unwrap_or(len)
+        Self::BUCKETS
+            .iter()
+            .copied()
+            .find(|&b| len <= b)
+            .unwrap_or(len)
     }
 }
 

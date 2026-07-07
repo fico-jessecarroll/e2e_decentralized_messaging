@@ -24,11 +24,19 @@ pub struct Message {
 
 impl Message {
     pub fn sent(body: Vec<u8>, unix_ts: i64) -> Self {
-        Self { direction: Direction::Sent, body, unix_ts }
+        Self {
+            direction: Direction::Sent,
+            body,
+            unix_ts,
+        }
     }
 
     pub fn received(body: Vec<u8>, unix_ts: i64) -> Self {
-        Self { direction: Direction::Received, body, unix_ts }
+        Self {
+            direction: Direction::Received,
+            body,
+            unix_ts,
+        }
     }
 
     fn body_text(&self) -> String {
@@ -64,7 +72,12 @@ pub fn render_conversation(state: &ConversationState) -> String {
                 Direction::Sent => "You",
                 Direction::Received => "Them",
             };
-            format!("[{}] {}: {}", message.human_timestamp(), sender, message.body_text())
+            format!(
+                "[{}] {}: {}",
+                message.human_timestamp(),
+                sender,
+                message.body_text()
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
