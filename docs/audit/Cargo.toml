@@ -1,0 +1,16 @@
+[package]
+name = "docs-audit"
+version.workspace = true
+edition.workspace = true
+description = "External security audit findings tracker — every finding has a resolution status; no critical/high finding ships open"
+
+[lib]
+name = "docs_audit"
+path = "src/lib.rs"
+
+# findings.rs is the read-only acceptance oracle for this story. It lives at docs/audit/findings.rs
+# (not the conventional tests/ directory) because it predates this crate's scaffolding; Cargo lets
+# a [[test]] target point at an arbitrary path, so it's wired in here rather than moved.
+[[test]]
+name = "findings"
+path = "findings.rs"
