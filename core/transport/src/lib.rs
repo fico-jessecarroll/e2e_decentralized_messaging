@@ -19,7 +19,9 @@
 //! in [`mod@dht`].
 
 pub mod dht;
+pub mod metadata;
 pub mod online;
+pub mod padding;
 pub mod privacy;
 pub mod sealed_sender;
 
