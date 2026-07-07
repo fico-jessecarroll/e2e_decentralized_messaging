@@ -48,12 +48,26 @@ pub fn verify_safety_number(state: &VerificationState, input: &str) -> Verificat
             if input == expected {
                 VerificationState::Verified
             } else {
-                VerificationState::KeyChangedWarning {
-                    previous: expected,
-                    current: input.to_string(),
-                }
+                VerificationState::KeyChangedWarning { previous: expected, current: input.to_string() }
             }
         }
         (VerificationState::KeyChangedWarning { .. }, _) | (_, None) => state.clone(),
+    }
+}
+
+pub fn describe_verification_flow_for_user() -> VerificationFlowDoc {
+    VerificationFlowDoc::LayUserFriendly
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationFlowDoc {
+    LayUserFriendly,
+}
+
+impl VerificationFlowDoc {
+    pub fn body(&self) -> &str {
+        match self {
+            VerificationFlowDoc::LayUserFriendly => "Compare the safety number shown on your device with the one displayed here. If they match, you can trust the connection.",
+        }
     }
 }
