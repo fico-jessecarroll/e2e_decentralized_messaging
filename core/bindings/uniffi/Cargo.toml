@@ -7,3 +7,10 @@ description = "UniFFI bindings exposing the core to iOS/Android"
 [lib]
 name = "core_bindings_uniffi"
 path = "src/lib.rs"
+
+[dependencies]
+crypto = { path = "../../crypto" }
+uniffi = "0.32"
+thiserror = "1"
+aes-gcm = "0.10"
+
