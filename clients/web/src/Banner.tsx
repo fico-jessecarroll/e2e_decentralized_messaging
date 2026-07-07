@@ -1,22 +1,30 @@
 import React, { useState } from 'react';
 import { threatModelWarning } from './index';
 
+const STORAGE_KEY = 'reducedThreatModelDismissed';
+
 export default function Banner() {
     const [dismissed, setDismissed] = useState(() => {
-        return !!sessionStorage.getItem('bannerDismissed');
+        try {
+            return sessionStorage.getItem(STORAGE_KEY) === 'true';
+        } catch (_) {
+            return false;
+        }
     });
 
     if (dismissed) return null;
 
-    const handleClose = () => {
-        sessionStorage.setItem('bannerDismissed', 'true');
+    const handleDismiss = () => {
+        try {
+            sessionStorage.setItem(STORAGE_KEY, 'true');
+        } catch (_) {}
         setDismissed(true);
     };
 
     return (
-        <div style={{ background: '#ffdddd', padding: '1rem', position: 'relative' }}>
+        <div style={{ backgroundColor: '#ffdddd', padding: '1rem' }} data-testid="banner">
             <p>{threatModelWarning()}</p>
-            <button onClick={handleClose} aria-label="dismiss banner" style={{ position: 'absolute', top: '0.5rem', right: '0.5rem' }}>✕</button>
+            <button onClick={handleDismiss}>Dismiss</button>
         </div>
     );
 }
