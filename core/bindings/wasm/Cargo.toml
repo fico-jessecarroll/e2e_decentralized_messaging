@@ -5,5 +5,8 @@ edition.workspace = true
 description = "WASM bindings exposing the core to web clients"
 
 [lib]
-name = "wasm_bindings"
+name = "core_bindings_wasm"
 path = "src/lib.rs"
+
+[dependencies]
+crypto = { path = "../../crypto" }
