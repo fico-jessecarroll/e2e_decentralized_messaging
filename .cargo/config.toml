@@ -1,0 +1,6 @@
+# getrandom 0.3 (pulled in via rand 0.9 -> rand_core 0.9) requires this cfg to select
+# its browser Web Crypto API backend on wasm32-unknown-unknown; the `wasm_js` Cargo
+# feature (set in core/bindings/wasm/Cargo.toml) alone is not sufficient.
+# See: https://docs.rs/getrandom/latest/getrandom/#webassembly-support
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

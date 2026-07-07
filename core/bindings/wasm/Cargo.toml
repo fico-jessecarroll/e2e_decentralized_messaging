@@ -11,9 +11,12 @@ path = "src/lib.rs"
 [dependencies]
 crypto = { path = "../../crypto" }
 
-# libsignal-protocol pulls in getrandom 0.2 transitively (via rand_core 0.6). That
-# version has no default source of randomness on wasm32-unknown-unknown and fails
-# to compile unless the `js` backend (browser Web Crypto API, via wasm-bindgen) is
-# enabled explicitly.
+# The dependency graph carries two incompatible major versions of getrandom, each
+# needing its wasm backend enabled explicitly or it fails to compile on
+# wasm32-unknown-unknown: 0.2 (transitively via libsignal-protocol -> rand_core 0.6)
+# and 0.3 (transitively via crypto's own rand 0.9 -> rand_core 0.9). getrandom 0.3
+# additionally requires the `--cfg getrandom_backend="wasm_js"` rustflag set in
+# .cargo/config.toml -- enabling the Cargo feature alone is not sufficient for it.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+getrandom-v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
