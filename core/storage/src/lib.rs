@@ -229,7 +229,7 @@ const IDENTITY_KEY: &str = "identity";
 /// bytes) and returns the body. Fails closed with [`StoreError::Corrupted`] on any structural
 /// mismatch — a value shorter than the prefix, or a body whose length does not match the
 /// declared length.
-fn parse_envelope(envelope: &[u8]) -> Result<Vec<u8>, StoreError> {
+pub fn parse_envelope(envelope: &[u8]) -> Result<Vec<u8>, StoreError> {
     if envelope.len() < 4 {
         return Err(StoreError::Corrupted {
             reason: "value shorter than length prefix",
