@@ -24,6 +24,7 @@ impl IdentityKeyPair {
 }
 
 /// The public half of an [`IdentityKeyPair`]: a type-tagged Curve25519 point.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicIdentityKey(Box<[u8]>);
 
 impl PublicIdentityKey {

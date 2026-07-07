@@ -4,8 +4,8 @@
 //!  - All group members can decrypt a message encrypted with the sender's group key
 //!  - Negative: a non-member cannot decrypt a group message
 
-use core_crypto::identity::IdentityKeyPair;
-use core_protocol::group::{GroupSession, GroupMember, NonMember};
+use crypto::identity::IdentityKeyPair;
+use protocol::group::{GroupSession, GroupMember, NonMember};
 
 #[test]
 fn all_group_members_can_decrypt_a_group_message() {

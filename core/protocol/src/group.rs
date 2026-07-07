@@ -1,36 +1,38 @@
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::aead::Aead;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use std::convert::TryInto;
-use core_crypto::identity::{IdentityKeyPair, PublicIdentityKey};
+use crypto::identity::{IdentityKeyPair, PublicIdentityKey};
 
 /// Wrapper for a group member's public identity key.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GroupMember(PublicIdentityKey);
+pub struct GroupMember(pub PublicIdentityKey);
 
 /// Wrapper used to indicate a caller that is not a member of the group.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NonMember(PublicIdentityKey);
+pub struct NonMember(pub PublicIdentityKey);
 
-/// Trait for types that can provide a public identity key.
+/// Types that can identify themselves with a public identity key when decrypting.
 pub trait Caller {
-    fn public(&self) -> &PublicIdentityKey;
+    fn public(&self) -> PublicIdentityKey;
 }
 
 impl Caller for IdentityKeyPair {
-    fn public(&self) -> &PublicIdentityKey { self.public() }
+    fn public(&self) -> PublicIdentityKey { IdentityKeyPair::public(self) }
 }
 
 impl Caller for NonMember {
-    fn public(&self) -> &PublicIdentityKey { &self.0 }
+    fn public(&self) -> PublicIdentityKey { self.0.clone() }
+}
+
+impl<T: Caller> Caller for &T {
+    fn public(&self) -> PublicIdentityKey { (*self).public() }
 }
 
 /// A simple group session that can encrypt and decrypt messages for a set of members.
 #[derive(Debug, Clone)]
 pub struct GroupSession {
-    /// Sender's public identity key (not used directly but kept for reference).
-    sender: PublicIdentityKey,
     /// List of member public keys.
     members: Vec<PublicIdentityKey>,
     /// Current chain key used to derive per-message encryption keys.
@@ -44,7 +46,7 @@ impl GroupSession {
         let hk = Hkdf::<Sha256>::new(None, &sender_pub.to_bytes());
         let mut ck = [0u8; 32];
         hk.expand(b"chain", &mut ck).expect("hkdf expand chain");
-        Self { sender: sender_pub, members: Vec::new(), chain_key: ck }
+        Self { members: Vec::new(), chain_key: ck }
     }
 
     /// Add a member to the group.
@@ -54,7 +56,11 @@ impl GroupSession {
     }
 
     /// Encrypt plaintext as the sender. Returns ciphertext bytes.
-    pub fn encrypt_as(&self, sender: &IdentityKeyPair, plaintext: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    ///
+    /// `_sender` is not read: the chain key already commits to the sender's identity (derived
+    /// in [`GroupSession::new`] from their public key), so there is nothing further to check
+    /// here — the parameter exists to make the call site's intent explicit.
+    pub fn encrypt_as(&self, _sender: &IdentityKeyPair, plaintext: &[u8]) -> Result<Vec<u8>, std::io::Error> {
         // Derive per-message key and nonce from current chain key.
         let hk = Hkdf::<Sha256>::new(None, &self.chain_key);
         let mut key_bytes = [0u8; 32];
@@ -62,9 +68,12 @@ impl GroupSession {
         let mut nonce_bytes = [0u8; 12];
         hk.expand(b"nonce", &mut nonce_bytes).expect("hkdf expand nonce");
 
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let ciphertext_payload = cipher.encrypt(nonce, plaintext).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let ciphertext_payload = cipher
+            .encrypt(nonce, plaintext)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
         // Build wrappers: for each member include their pubkey and the chain key.
         let mut wrappers = Vec::new();
@@ -90,7 +99,10 @@ impl GroupSession {
         // Parse header
         let mut pos = 0;
         if ciphertext.len() < 12 + 4 + 1 { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "ciphertext too short")); }
-        let nonce_bytes: [u8;12] = ciphertext[pos..pos+12].try_into().unwrap(); pos+=12;
+        // The header carries the nonce for wire-format documentation, but it is not read here:
+        // the nonce is deterministically re-derived from the chain key below (see nonce_bytes2),
+        // not transmitted.
+        let _nonce_bytes: [u8; 12] = ciphertext[pos..pos + 12].try_into().unwrap(); pos += 12;
         let payload_len = u32::from_le_bytes(ciphertext[pos..pos+4].try_into().unwrap()) as usize; pos+=4;
         if ciphertext.len() < 12 + 4 + payload_len + 1 { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "payload length mismatch")); }
         let payload = &ciphertext[pos..pos+payload_len]; pos+=payload_len;
@@ -115,9 +127,12 @@ impl GroupSession {
         let mut nonce_bytes2 = [0u8; 12];
         hk.expand(b"nonce", &mut nonce_bytes2).expect("hkdf expand nonce");
 
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         let nonce = Nonce::from_slice(&nonce_bytes2);
-        let plaintext = cipher.decrypt(nonce, payload).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let plaintext = cipher
+            .decrypt(nonce, payload)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         Ok(plaintext)
     }
 }
