@@ -7,6 +7,7 @@
 mod commands;
 mod error;
 pub mod ui;
+pub mod verify;
 
 pub use error::ShellError;
 
