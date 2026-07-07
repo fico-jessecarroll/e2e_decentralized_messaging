@@ -4,8 +4,8 @@
 //!  - Newly added member can decrypt messages sent after joining
 //!  - Negative: newly added member cannot decrypt messages sent before joining
 
-use core_crypto::identity::IdentityKeyPair;
-use core_protocol::group::{GroupSession, GroupMember};
+use crypto::identity::IdentityKeyPair;
+use protocol::group::{GroupSession, GroupMember};
 
 #[test]
 fn newly_added_member_can_decrypt_messages_sent_after_joining() {
