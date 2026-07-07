@@ -6853,6 +6853,9 @@ dependencies = [
 [[package]]
 name = "wasm-bindings"
 version = "0.1.0"
+dependencies = [
+ "crypto",
+]
 
 [[package]]
 name = "wasm-streams"
