@@ -9,13 +9,19 @@ name = "protocol"
 path = "src/lib.rs"
 
 [dependencies]
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+# group.rs scrubs derived AES keys from memory once consumed (defense in depth, matching the
+# discipline in core/crypto/src/identity.rs and core/transport/src/sealed_sender.rs).
+zeroize = "1.9.0"
+crypto = { path = "../crypto" }
 # Per-device fan-out uses the same `DoubleRatchetSession` facade the rest of the
 # codebase already establishes 1:1 sessions through. Tying the fan-out to this
 # audited facade — not to `libsignal` types directly — keeps per-device security
 # posture identical to a single-device session and avoids re-introducing address /
 # store types into the protocol crate (PLAN.md Phase 6 "Per-device session
 # fan-out").
-crypto = { path = "../crypto" }
 libsignal-protocol.workspace = true
 # `DoubleRatchetSession`'s PQXDH establishment and Double Ratchet encrypt/decrypt are
 # async over the `libsignal` session store, but never actually suspend — the store is

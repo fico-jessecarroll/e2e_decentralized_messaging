@@ -5,3 +5,4 @@
 //! in turn wraps `libsignal` directly.
 
 pub mod fanout;
+pub mod group;
