@@ -18,6 +18,21 @@
 use std::fmt;
 
 #[derive(Debug, Clone)]
+impl PartialEq for VerificationState {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (VerificationState::Unverified { .. }, VerificationState::Unverified { .. }) => true,
+            (VerificationState::Verified { .. }, VerificationState::Verified { .. }) => true,
+            (
+                VerificationState::KeyChangedWarning { previous: p1, current: c1 },
+                VerificationState::KeyChangedWarning { previous: p2, current: c2 },
+            ) => p1 == p2 && c1 == c2,
+            _ => false,
+        }
+    }
+}
+impl Eq for VerificationState {}
+
 pub enum VerificationState {
     /// Initial state – the safety number has not yet been verified.
     Unverified { expected: String },
