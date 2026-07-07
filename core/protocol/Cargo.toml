@@ -15,6 +15,9 @@ sha2 = "0.10"
 # group.rs scrubs derived AES keys from memory once consumed (defense in depth, matching the
 # discipline in core/crypto/src/identity.rs and core/transport/src/sealed_sender.rs).
 zeroize = "1.9.0"
+# GroupSession::rotate_sender_key needs a CSPRNG-fresh chain key (NOT an HKDF-ratchet of the old
+# one — a removed member holding the old chain key must not be able to derive the new one).
+rand = "0.9"
 crypto = { path = "../crypto" }
 # Per-device fan-out uses the same `DoubleRatchetSession` facade the rest of the
 # codebase already establishes 1:1 sessions through. Tying the fan-out to this
