@@ -4,8 +4,8 @@
 //!  - Remaining members can decrypt messages sent after rotation
 //!  - Negative (primary case): a removed member cannot decrypt any message sent after their removal, even with the old key
 
-use core_crypto::identity::IdentityKeyPair;
-use core_protocol::group::{GroupSession, GroupMember};
+use crypto::identity::IdentityKeyPair;
+use protocol::group::{GroupSession, GroupMember};
 
 #[test]
 fn remaining_members_can_decrypt_messages_sent_after_rotation() {

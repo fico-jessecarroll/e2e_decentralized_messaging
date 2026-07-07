@@ -42,11 +42,34 @@
 //! computationally infeasible (HKDF-Expand is one-way). The chain key is stored in a [`Cell`] so
 //! `encrypt_as` can advance it while keeping a `&self` (not `&mut self`) signature — the
 //! established public API this module's acceptance test already depends on.
+//!
+//! ## Member removal and rotation
+//!
+//! [`GroupSession::remove_member`] drops a member from the roster so future [`encrypt_as`]
+//! calls no longer seal a wrapper for them. [`GroupSession::rotate_sender_key`] replaces the
+//! chain key with a **fresh CSPRNG value** — deliberately NOT another `encrypt_as`-style
+//! HKDF-ratchet step. This distinction is the entire security property removal depends on: the
+//! per-message ratchet is a one-way function of the *current* chain key, so anyone who captured
+//! that chain key (a removed member, by definition, since they were a member up until removal)
+//! could still compute every future ratcheted key forward from it. A CSPRNG-fresh key breaks
+//! that chain completely — the old chain key carries zero information about the new one. Callers
+//! MUST call `remove_member` before `rotate_sender_key` (dropping the member from the roster
+//! first, then rotating so the removed member is never sent a wrapper for the new key) — the
+//! acceptance test exercises exactly this order.
+//!
+//! [`GroupSession::sender_key_copy_for`] and [`GroupSession::try_decrypt_with_sender_key`] exist
+//! solely to let a test (or an incident investigation) simulate "what if this specific captured
+//! chain key were used to try to decrypt a later message" — they are the explicit-key equivalent
+//! of `decrypt_as`, which always uses the session's *current* live chain key. Neither method
+//! grants any capability a holder of that raw key didn't already have; they just make the
+//! captured-key attack scenario directly testable.
 
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use crypto::identity::{IdentityKeyPair, PublicIdentityKey};
 use hkdf::Hkdf;
+use rand::rngs::OsRng;
+use rand::TryRngCore;
 use sha2::Sha256;
 use std::cell::Cell;
 use std::convert::TryInto;
@@ -132,6 +155,93 @@ impl GroupSession {
     pub fn add_member(mut self, member: GroupMember) -> Self {
         self.members.push(member.0);
         self
+    }
+
+    /// Remove a member from the group. Future [`encrypt_as`](Self::encrypt_as) calls no longer
+    /// seal a wrapper for them.
+    ///
+    /// This alone does NOT protect messages sent after removal — the removed member still holds
+    /// every chain key they observed while a member, and `encrypt_as`'s ratchet is a one-way
+    /// function of the *current* chain key, so they could still compute forward. Callers MUST
+    /// follow this with [`rotate_sender_key`](Self::rotate_sender_key) to actually cut off future
+    /// access (see the module-level "Member removal and rotation" doc).
+    pub fn remove_member(mut self, member: GroupMember) -> Self {
+        self.members.retain(|m| m != &member.0);
+        self
+    }
+
+    /// Replace the chain key with a fresh CSPRNG value, unrelated to the current one.
+    ///
+    /// Unlike `encrypt_as`'s per-message ratchet (a deterministic HKDF-Expand of the *current*
+    /// chain key), this draws fresh randomness from the OS CSPRNG — so no one who observed the
+    /// pre-rotation chain key, including a member removed via
+    /// [`remove_member`](Self::remove_member) moments earlier, can derive the post-rotation key
+    /// or any message key descended from it. Call this AFTER `remove_member`, not before — see
+    /// the module-level doc for why the order matters.
+    pub fn rotate_sender_key(self) -> Self {
+        let mut fresh = [0u8; 32];
+        OsRng.try_fill_bytes(&mut fresh).expect("OS CSPRNG must be available");
+        self.chain_key.set(fresh);
+        fresh.zeroize();
+        self
+    }
+
+    /// Return a copy of the session's CURRENT raw chain key, as observed by `member` (who must
+    /// currently be a member — this does not check membership, since it exists only to let a
+    /// test or incident investigation simulate "capture the key a member could see right now").
+    ///
+    /// Exists solely to make the captured-key attack scenario in
+    /// [`try_decrypt_with_sender_key`](Self::try_decrypt_with_sender_key) testable — it does not
+    /// grant `member` (or the caller) any capability they didn't already have as a current
+    /// member, since a real member already has access to every message key derived from this
+    /// chain key via ordinary [`decrypt_as`](Self::decrypt_as) calls.
+    pub fn sender_key_copy_for(&self, _member: &IdentityKeyPair) -> [u8; 32] {
+        self.chain_key.get()
+    }
+
+    /// Attempt to decrypt `ciphertext` using an explicitly-provided chain key rather than the
+    /// session's current live one.
+    ///
+    /// This simulates an attacker (e.g. a removed member) who captured a chain key at some point
+    /// and is trying to use it against a LATER message. It re-derives the per-message key from
+    /// `sender_key` the same way `encrypt_as` would have — but if `ciphertext` was produced after
+    /// [`rotate_sender_key`](Self::rotate_sender_key) replaced the live chain key with a fresh,
+    /// unrelated CSPRNG value, `sender_key` (the old one) cannot reproduce the message key that
+    /// actually encrypted `ciphertext`, and AEAD authentication fails.
+    pub fn try_decrypt_with_sender_key(
+        &self,
+        sender_key: &[u8; 32],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, std::io::Error> {
+        if ciphertext.len() < 12 + 4 + 1 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "ciphertext too short"));
+        }
+        let nonce_bytes: [u8; 12] = ciphertext[0..12].try_into().unwrap();
+
+        // Derive the candidate message key from sender_key exactly as encrypt_as would from a
+        // live chain key. The nonce is read from the wire (matching decrypt_as), not re-derived
+        // from sender_key: if sender_key is stale (post-rotation), the derived key is simply
+        // wrong for this ciphertext, and AEAD authentication fails on that basis alone — the
+        // same failure mode decrypt_as would hit with a wrong key, not an artificial nonce
+        // mismatch that would obscure the actual security property under test.
+        let hk = Hkdf::<Sha256>::new(None, sender_key);
+        let mut key_bytes = [0u8; 32];
+        hk.expand(b"msg", &mut key_bytes).expect("hkdf expand msg key");
+
+        let payload_len = u32::from_le_bytes(ciphertext[12..16].try_into().unwrap()) as usize;
+        if ciphertext.len() < 16 + payload_len {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "payload length mismatch"));
+        }
+        let payload = &ciphertext[16..16 + payload_len];
+
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        key_bytes.zeroize();
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let plaintext = cipher
+            .decrypt(nonce, payload)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        Ok(plaintext)
     }
 
     /// Encrypt plaintext as the sender. Returns ciphertext bytes.
@@ -405,5 +515,101 @@ mod tests {
                 "treating the sealed blob's leading bytes as the AES key must not decrypt"
             );
         }
+    }
+
+    #[test]
+    fn rotation_produces_a_chain_key_unrelated_to_the_pre_rotation_one() {
+        // The core security property rotate_sender_key depends on: the new chain key must be
+        // CSPRNG-fresh, NOT an HKDF-ratchet of the old one. If it were derived from the old key
+        // (the same one-way function encrypt_as's per-message ratchet uses), a removed member
+        // holding the old chain key could still compute the new one.
+        let sender = IdentityKeyPair::generate();
+        let group = GroupSession::new(sender.public());
+        let pre_rotation_key = group.chain_key.get();
+
+        let group = group.rotate_sender_key();
+        let post_rotation_key = group.chain_key.get();
+
+        assert_ne!(pre_rotation_key, post_rotation_key);
+
+        // Stronger than mere inequality: confirm the new key is NOT derivable from the old one
+        // via the same ratchet construction encrypt_as uses (the "chain-ratchet" HKDF label).
+        // If rotation were just another ratchet step, this would match.
+        let hk = Hkdf::<Sha256>::new(None, &pre_rotation_key);
+        let mut would_be_ratcheted = [0u8; 32];
+        hk.expand(b"chain-ratchet", &mut would_be_ratcheted).unwrap();
+        assert_ne!(
+            post_rotation_key, would_be_ratcheted,
+            "rotate_sender_key must NOT be equivalent to one more encrypt_as ratchet step \
+             derived from the old key — it must be independent CSPRNG randomness"
+        );
+    }
+
+    #[test]
+    fn a_removed_members_captured_chain_key_cannot_decrypt_any_message_after_rotation_even_several_messages_later() {
+        // Stronger than the acceptance test: confirms the captured-old-key attack fails not just
+        // for the very next message post-rotation, but for messages arbitrarily far after it —
+        // i.e. rotation is a hard break, not something a stale key could catch up to by
+        // replaying encrypt_as's forward ratchet from the captured point.
+        let sender = IdentityKeyPair::generate();
+        let alice = IdentityKeyPair::generate();
+        let eve = IdentityKeyPair::generate();
+
+        let mut group = GroupSession::new(sender.public())
+            .add_member(GroupMember(alice.public()))
+            .add_member(GroupMember(eve.public()));
+
+        let eve_captured_key = group.sender_key_copy_for(&eve);
+
+        group = group.remove_member(GroupMember(eve.public()));
+        group = group.rotate_sender_key();
+
+        // Several messages after rotation, not just the first one.
+        for i in 0..5 {
+            let ciphertext = group.encrypt_as(&sender, format!("message {i}").as_bytes()).unwrap();
+            assert!(
+                group.try_decrypt_with_sender_key(&eve_captured_key, &ciphertext).is_err(),
+                "captured pre-rotation key must never decrypt, including message {i} several steps after rotation"
+            );
+            // Remaining member still works at every step.
+            assert_eq!(
+                group.decrypt_as(&alice, &ciphertext).unwrap(),
+                format!("message {i}").as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn remove_member_alone_without_rotation_does_not_yet_protect_future_messages() {
+        // Documents the ordering requirement in the module-level doc: remove_member alone drops
+        // the member from the wrapper list (so encrypt_as stops addressing them going forward),
+        // but does NOT invalidate the chain key itself. A member who captured the chain key
+        // before being removed can still ratchet it forward by hand and decrypt messages sent
+        // after their removal, UNTIL rotate_sender_key is also called. This test exists to make
+        // the ordering requirement explicit and regression-guarded, not to endorse skipping
+        // rotation — real callers must always rotate immediately after removing.
+        let sender = IdentityKeyPair::generate();
+        let eve = IdentityKeyPair::generate();
+
+        let mut group = GroupSession::new(sender.public()).add_member(GroupMember(eve.public()));
+        let eve_captured_key = group.sender_key_copy_for(&eve);
+
+        group = group.remove_member(GroupMember(eve.public()));
+        // Deliberately NOT calling rotate_sender_key() here.
+
+        let ciphertext = group.encrypt_as(&sender, b"removed but not rotated").unwrap();
+
+        // Eve is gone from the wrapper list, so the ordinary decrypt_as path correctly fails...
+        assert!(group.decrypt_as(&eve, &ciphertext).is_err());
+
+        // ...but her captured chain key can still ratchet forward by hand and derive this
+        // message's key, because the chain key itself was never invalidated. This is exactly
+        // why the module doc mandates rotate_sender_key immediately after remove_member.
+        let hk = Hkdf::<Sha256>::new(None, &eve_captured_key);
+        let mut forward_key = [0u8; 32];
+        hk.expand(b"msg", &mut forward_key).unwrap();
+        let mut forward_nonce = [0u8; 12];
+        hk.expand(b"nonce", &mut forward_nonce).unwrap();
+        assert_eq!(&ciphertext[0..12], &forward_nonce[..], "confirms the key was NOT rotated");
     }
 }

@@ -4479,6 +4479,7 @@ dependencies = [
  "futures-executor",
  "hkdf",
  "libsignal-protocol",
+ "rand 0.9.4",
  "sha2",
  "thiserror 1.0.69",
  "tokio",
