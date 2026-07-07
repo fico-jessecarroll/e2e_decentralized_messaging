@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import Banner from '../src/Banner';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 describe('Banner component', () => {
     beforeEach(() => {
