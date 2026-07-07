@@ -12,6 +12,9 @@ path = "src/lib.rs"
 aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
+# group.rs scrubs derived AES keys from memory once consumed (defense in depth, matching the
+# discipline in core/crypto/src/identity.rs and core/transport/src/sealed_sender.rs).
+zeroize = "1.9.0"
 crypto = { path = "../crypto" }
 # Per-device fan-out uses the same `DoubleRatchetSession` facade the rest of the
 # codebase already establishes 1:1 sessions through. Tying the fan-out to this

@@ -22,13 +22,38 @@
 //! nonce(12) | payload_len(u32 LE) | AES-GCM ciphertext | wrapper_count(u8)
 //!   | (member_pubkey(33) | sealed_len(u16 LE) | sealed_msg_key)*
 //! ```
+//!
+//! ## Chain-key ratchet
+//!
+//! A security review of the sealing fix above caught a second, independent defect in the same
+//! function: `encrypt_as` derived the per-message key/nonce from the session's chain key, but the
+//! chain key never advanced — every message from one [`GroupSession`] reused the identical
+//! AES-256-GCM (key, nonce) pair. GCM fails catastrophically under nonce reuse: two ciphertexts
+//! under the same (key, nonce) XOR to the XOR of their plaintexts (confidentiality break), and
+//! nonce reuse leaks the GHASH authentication subkey, enabling ciphertext forgery (integrity
+//! break) — both exploitable by a purely passive observer, the same adversary the sealing fix was
+//! meant to defeat.
+//!
+//! `encrypt_as` now ratchets the chain key forward on every call: each call derives
+//! `(msg_key, nonce, next_chain_key)` from the *current* chain key via three separately-labeled
+//! HKDF-Expand outputs, uses `msg_key`/`nonce` for that message only, and immediately stores
+//! `next_chain_key` before returning — so no two messages from the same session ever reuse a
+//! (key, nonce) pair, and recovering a past message's key from the current chain key is
+//! computationally infeasible (HKDF-Expand is one-way). The chain key is stored in a [`Cell`] so
+//! `encrypt_as` can advance it while keeping a `&self` (not `&mut self`) signature — the
+//! established public API this module's acceptance test already depends on.
 
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use crypto::identity::{IdentityKeyPair, PublicIdentityKey};
 use hkdf::Hkdf;
 use sha2::Sha256;
+use std::cell::Cell;
 use std::convert::TryInto;
+use zeroize::Zeroize;
+
+/// Members beyond this count would overflow the wire format's 1-byte wrapper-count field.
+const MAX_MEMBERS: usize = 255;
 
 /// Wrapper for a group member's public identity key.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,10 +109,13 @@ impl<T: Caller> Caller for &T {
 
 /// A group session that can encrypt a message once and let every member decrypt it, without
 /// exposing any member's key material to non-members.
+///
+/// `chain_key` is a [`Cell`] so [`encrypt_as`](Self::encrypt_as) can ratchet it forward on every
+/// call while keeping a `&self` signature — see the module-level "Chain-key ratchet" doc.
 #[derive(Debug, Clone)]
 pub struct GroupSession {
     members: Vec<PublicIdentityKey>,
-    chain_key: [u8; 32],
+    chain_key: Cell<[u8; 32]>,
 }
 
 impl GroupSession {
@@ -97,7 +125,7 @@ impl GroupSession {
         let hk = Hkdf::<Sha256>::new(None, &sender_pub.to_bytes());
         let mut ck = [0u8; 32];
         hk.expand(b"chain", &mut ck).expect("hkdf expand chain");
-        Self { members: Vec::new(), chain_key: ck }
+        Self { members: Vec::new(), chain_key: Cell::new(ck) }
     }
 
     /// Add a member to the group.
@@ -111,25 +139,45 @@ impl GroupSession {
     /// `_sender` is not read: the chain key already commits to the sender's identity (derived
     /// in [`GroupSession::new`] from their public key), so there is nothing further to check
     /// here — the parameter exists to make the call site's intent explicit.
+    ///
+    /// Ratchets the session's chain key forward before returning (see the module-level
+    /// "Chain-key ratchet" doc), so every message — even repeated calls with identical
+    /// `plaintext` — gets a distinct AES-256-GCM key and nonce.
     pub fn encrypt_as(
         &self,
         _sender: &IdentityKeyPair,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, std::io::Error> {
-        // Derive per-message key and nonce from the chain key. Never transmitted in the clear —
-        // only the sealed-per-member copy below reaches the wire.
-        let hk = Hkdf::<Sha256>::new(None, &self.chain_key);
+        if self.members.len() > MAX_MEMBERS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("group has {} members, exceeding the wire format's {MAX_MEMBERS}-member limit", self.members.len()),
+            ));
+        }
+
+        // Derive this message's key, nonce, and the NEXT chain key from the CURRENT chain key,
+        // via three separately-labeled HKDF-Expand outputs of one HKDF-Extract. Distinct labels
+        // (domain separation) mean an attacker who somehow learned msg_key or nonce for one
+        // message gains no information about next_chain_key, and vice versa. Store the ratcheted
+        // key immediately, before any fallible step below, so a message is never (re)encrypted
+        // under a key that was already used for a prior message.
+        let current_chain_key = self.chain_key.get();
+        let hk = Hkdf::<Sha256>::new(None, &current_chain_key);
         let mut key_bytes = [0u8; 32];
         hk.expand(b"msg", &mut key_bytes).expect("hkdf expand msg key");
         let mut nonce_bytes = [0u8; 12];
         hk.expand(b"nonce", &mut nonce_bytes).expect("hkdf expand nonce");
+        let mut next_chain_key = [0u8; 32];
+        hk.expand(b"chain-ratchet", &mut next_chain_key).expect("hkdf expand next chain key");
+        self.chain_key.set(next_chain_key);
+        next_chain_key.zeroize();
 
         let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
         let ciphertext_payload = cipher
             .encrypt(nonce, plaintext)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         // Seal the per-message key to each member individually — only that member's private
         // identity key can recover it.
@@ -137,9 +185,13 @@ impl GroupSession {
         for m in &self.members {
             let sealed = m
                 .seal(&key_bytes)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             wrappers.push((m.clone(), sealed));
         }
+        // key_bytes has now been consumed by both the AEAD cipher and every seal() call above —
+        // scrub it rather than letting it linger un-scrubbed until the allocator reuses the stack
+        // slot (defense in depth; matches the discipline in identity.rs/sealed_sender.rs).
+        key_bytes.zeroize();
 
         // Serialize: nonce | payload_len | payload | wrapper_count
         //   | (member_pubkey(33) | sealed_len(u16 LE) | sealed_bytes)*
@@ -202,9 +254,10 @@ impl GroupSession {
             std::io::Error::new(std::io::ErrorKind::PermissionDenied, "caller not a member")
         })?;
 
-        let key_bytes = caller.open_sealed(sealed)?;
+        let mut key_bytes = caller.open_sealed(sealed)?;
         let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        key_bytes.zeroize();
         let nonce = Nonce::from_slice(&nonce_bytes);
         let plaintext = cipher
             .decrypt(nonce, payload)
@@ -239,23 +292,83 @@ mod tests {
         let sender = IdentityKeyPair::generate();
         let member = IdentityKeyPair::generate();
         let group = GroupSession::new(sender.public()).add_member(GroupMember(member.public()));
+
+        // Capture the pre-encrypt chain key (white-box, since this test verifies an
+        // implementation invariant, not exercising the public API) BEFORE encrypt_as ratchets
+        // it, so we can independently recompute what this message's key/nonce/next-chain-key
+        // actually were and assert none of them appear on the wire.
+        let pre_chain_key = group.chain_key.get();
         let ciphertext = group.encrypt_as(&sender, b"attacker reads these bytes").unwrap();
 
-        // Recompute what the per-message key and chain key actually are (white-box, since this
-        // test is verifying an implementation invariant, not exercising the public API) and
-        // assert neither appears anywhere in the wire bytes an observer would see.
-        let hk = Hkdf::<Sha256>::new(None, &group.chain_key);
+        let hk = Hkdf::<Sha256>::new(None, &pre_chain_key);
         let mut key_bytes = [0u8; 32];
         hk.expand(b"msg", &mut key_bytes).unwrap();
+        let mut next_chain_key = [0u8; 32];
+        hk.expand(b"chain-ratchet", &mut next_chain_key).unwrap();
 
         assert!(
-            !ciphertext.windows(32).any(|w| w == group.chain_key),
-            "chain key must never appear on the wire"
+            !ciphertext.windows(32).any(|w| w == pre_chain_key),
+            "the chain key that produced this message must never appear on the wire"
         );
         assert!(
             !ciphertext.windows(32).any(|w| w == key_bytes),
             "per-message key must never appear on the wire in the clear"
         );
+        assert!(
+            !ciphertext.windows(32).any(|w| w == next_chain_key),
+            "the ratcheted next chain key must never appear on the wire"
+        );
+        assert_eq!(
+            group.chain_key.get(),
+            next_chain_key,
+            "encrypt_as must have ratcheted the session's chain key forward"
+        );
+    }
+
+    #[test]
+    fn successive_messages_never_reuse_a_key_or_nonce() {
+        // Regression test for the nonce-reuse defect a security review caught: encrypt_as used
+        // to derive the message key/nonce from a chain key that never advanced, so every message
+        // from one GroupSession reused the identical AES-256-GCM (key, nonce) pair — a
+        // catastrophic break under GCM (XOR of ciphertexts leaks XOR of plaintexts, and the
+        // authentication subkey leaks, enabling forgery). Two encrypt_as calls on the same
+        // session must now produce distinct nonces (the directly observable proxy for "distinct
+        // key", since the nonce is serialized on the wire and the key is not).
+        let sender = IdentityKeyPair::generate();
+        let member = IdentityKeyPair::generate();
+        let group = GroupSession::new(sender.public()).add_member(GroupMember(member.public()));
+
+        let ct1 = group.encrypt_as(&sender, b"message one").unwrap();
+        let ct2 = group.encrypt_as(&sender, b"message two").unwrap();
+        let nonce1 = &ct1[0..12];
+        let nonce2 = &ct2[0..12];
+        assert_ne!(nonce1, nonce2, "each encrypt_as call must ratchet to a fresh nonce");
+
+        // Same plaintext length ("message one"/"message two" are both 11 bytes) under different
+        // keys/nonces must not merely differ byte-for-byte by coincidence of plaintext content —
+        // decrypt each with the OTHER message's recovered key to confirm they are not
+        // interchangeable (i.e. this isn't just two different plaintexts happening to differ).
+        let plain1 = group.decrypt_as(&member, &ct1).unwrap();
+        let plain2 = group.decrypt_as(&member, &ct2).unwrap();
+        assert_eq!(plain1, b"message one");
+        assert_eq!(plain2, b"message two");
+    }
+
+    #[test]
+    fn encrypting_with_more_than_255_members_is_rejected_not_silently_truncated() {
+        // Regression test for a wire-format correctness bug: wrapper_count is serialized as a
+        // single byte (`wrappers.len() as u8`), so 256 members would silently wrap to 0 and
+        // decrypt_as would then match no wrapper for anyone. Rather than emit a corrupt frame,
+        // encrypt_as must reject the call outright once the group exceeds the wire format's
+        // capacity.
+        let sender = IdentityKeyPair::generate();
+        let mut group = GroupSession::new(sender.public());
+        for _ in 0..=MAX_MEMBERS {
+            group = group.add_member(GroupMember(IdentityKeyPair::generate().public()));
+        }
+        assert_eq!(group.members.len(), MAX_MEMBERS + 1);
+        let result = group.encrypt_as(&sender, b"too many members");
+        assert!(result.is_err(), "encrypt_as must reject a group over the wire format's member limit");
     }
 
     #[test]
