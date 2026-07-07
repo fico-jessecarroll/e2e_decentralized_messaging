@@ -45,24 +45,32 @@
 //!
 //! ## Member removal and rotation
 //!
-//! [`GroupSession::remove_member`] drops a member from the roster so future [`encrypt_as`]
-//! calls no longer seal a wrapper for them. [`GroupSession::rotate_sender_key`] replaces the
-//! chain key with a **fresh CSPRNG value** — deliberately NOT another `encrypt_as`-style
-//! HKDF-ratchet step. This distinction is the entire security property removal depends on: the
-//! per-message ratchet is a one-way function of the *current* chain key, so anyone who captured
-//! that chain key (a removed member, by definition, since they were a member up until removal)
-//! could still compute every future ratcheted key forward from it. A CSPRNG-fresh key breaks
-//! that chain completely — the old chain key carries zero information about the new one. Callers
-//! MUST call `remove_member` before `rotate_sender_key` (dropping the member from the roster
-//! first, then rotating so the removed member is never sent a wrapper for the new key) — the
-//! acceptance test exercises exactly this order.
+//! [`GroupSession::remove_member`] drops a member from the roster AND rotates the chain key to a
+//! **fresh CSPRNG value**, atomically, in one call. Rotation is deliberately NOT another
+//! `encrypt_as`-style HKDF-ratchet step: the per-message ratchet is a one-way function of the
+//! *current* chain key, so anyone who captured that chain key (a removed member, by definition,
+//! since they were a member up until removal) could still compute every future ratcheted key
+//! forward from it by hand. A CSPRNG-fresh key breaks that chain completely — the old chain key
+//! carries zero information about the new one.
+//!
+//! Removal and rotation used to be two separate calls. A security review flagged that as a
+//! foot-gun: nothing stopped a caller from removing a member and forgetting to rotate, silently
+//! shipping a "removed" member who could still decrypt every subsequent message with their
+//! captured key. There is no legitimate use case in this system for removing a member without
+//! also rotating, so `remove_member` now does both — the secure behavior is the only behavior,
+//! not an opt-in second step. [`GroupSession::rotate_sender_key`] remains separately callable for
+//! routine key hygiene independent of membership changes (a legitimate standalone use case),
+//! but a caller who only wants to remove a member gets forward security automatically.
 //!
 //! [`GroupSession::sender_key_copy_for`] and [`GroupSession::try_decrypt_with_sender_key`] exist
 //! solely to let a test (or an incident investigation) simulate "what if this specific captured
 //! chain key were used to try to decrypt a later message" — they are the explicit-key equivalent
 //! of `decrypt_as`, which always uses the session's *current* live chain key. Neither method
 //! grants any capability a holder of that raw key didn't already have; they just make the
-//! captured-key attack scenario directly testable.
+//! captured-key attack scenario directly testable. Both are `#[doc(hidden)]`: the read-only
+//! acceptance test requires them to be `pub` (it calls them directly, so they cannot be
+//! `#[cfg(test)]`-gated), but they are not part of the supported public API and should not be
+//! relied on by production callers.
 
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -157,17 +165,21 @@ impl GroupSession {
         self
     }
 
-    /// Remove a member from the group. Future [`encrypt_as`](Self::encrypt_as) calls no longer
-    /// seal a wrapper for them.
+    /// Remove a member from the group and rotate the sender key in the same operation, so the
+    /// removal is secure by default rather than requiring the caller to remember a second step.
     ///
-    /// This alone does NOT protect messages sent after removal — the removed member still holds
-    /// every chain key they observed while a member, and `encrypt_as`'s ratchet is a one-way
-    /// function of the *current* chain key, so they could still compute forward. Callers MUST
-    /// follow this with [`rotate_sender_key`](Self::rotate_sender_key) to actually cut off future
-    /// access (see the module-level "Member removal and rotation" doc).
+    /// Removal alone (dropping the member from the wrapper roster) does NOT protect messages
+    /// sent afterward: the removed member still holds every chain key they observed while a
+    /// member, and `encrypt_as`'s ratchet is a one-way function of the *current* chain key, so
+    /// they could still compute forward by hand. An earlier version of this API exposed removal
+    /// and rotation as two separate calls; a security review flagged that as a foot-gun — nothing
+    /// in the type system stopped a caller from removing a member and forgetting to rotate,
+    /// silently shipping a group with no actual forward security post-removal. `remove_member`
+    /// therefore always rotates internally now; there is no legitimate use case in this system
+    /// for removing a member without also rotating.
     pub fn remove_member(mut self, member: GroupMember) -> Self {
         self.members.retain(|m| m != &member.0);
-        self
+        self.rotate_sender_key()
     }
 
     /// Replace the chain key with a fresh CSPRNG value, unrelated to the current one.
@@ -175,9 +187,10 @@ impl GroupSession {
     /// Unlike `encrypt_as`'s per-message ratchet (a deterministic HKDF-Expand of the *current*
     /// chain key), this draws fresh randomness from the OS CSPRNG — so no one who observed the
     /// pre-rotation chain key, including a member removed via
-    /// [`remove_member`](Self::remove_member) moments earlier, can derive the post-rotation key
-    /// or any message key descended from it. Call this AFTER `remove_member`, not before — see
-    /// the module-level doc for why the order matters.
+    /// [`remove_member`](Self::remove_member) (which calls this internally), can derive the
+    /// post-rotation key or any message key descended from it. Still public on its own for
+    /// periodic rotation independent of membership changes — unlike removal, standalone rotation
+    /// has a legitimate use case (routine key hygiene), so it is not folded into another method.
     pub fn rotate_sender_key(self) -> Self {
         let mut fresh = [0u8; 32];
         OsRng.try_fill_bytes(&mut fresh).expect("OS CSPRNG must be available");
@@ -195,6 +208,11 @@ impl GroupSession {
     /// grant `member` (or the caller) any capability they didn't already have as a current
     /// member, since a real member already has access to every message key derived from this
     /// chain key via ordinary [`decrypt_as`](Self::decrypt_as) calls.
+    ///
+    /// `pub` (not `#[cfg(test)]`) only because the read-only acceptance test calls it directly
+    /// as an external integration test. `#[doc(hidden)]` keeps it out of the advertised API —
+    /// production callers should not use this.
+    #[doc(hidden)]
     pub fn sender_key_copy_for(&self, _member: &IdentityKeyPair) -> [u8; 32] {
         self.chain_key.get()
     }
@@ -208,6 +226,11 @@ impl GroupSession {
     /// [`rotate_sender_key`](Self::rotate_sender_key) replaced the live chain key with a fresh,
     /// unrelated CSPRNG value, `sender_key` (the old one) cannot reproduce the message key that
     /// actually encrypted `ciphertext`, and AEAD authentication fails.
+    ///
+    /// `pub` (not `#[cfg(test)]`) only because the read-only acceptance test calls it directly
+    /// as an external integration test. `#[doc(hidden)]` keeps it out of the advertised API —
+    /// production callers should not use this.
+    #[doc(hidden)]
     pub fn try_decrypt_with_sender_key(
         &self,
         sender_key: &[u8; 32],
@@ -580,14 +603,13 @@ mod tests {
     }
 
     #[test]
-    fn remove_member_alone_without_rotation_does_not_yet_protect_future_messages() {
-        // Documents the ordering requirement in the module-level doc: remove_member alone drops
-        // the member from the wrapper list (so encrypt_as stops addressing them going forward),
-        // but does NOT invalidate the chain key itself. A member who captured the chain key
-        // before being removed can still ratchet it forward by hand and decrypt messages sent
-        // after their removal, UNTIL rotate_sender_key is also called. This test exists to make
-        // the ordering requirement explicit and regression-guarded, not to endorse skipping
-        // rotation — real callers must always rotate immediately after removing.
+    fn remove_member_alone_now_protects_future_messages_because_it_rotates_internally() {
+        // Regression test for a design foot-gun a security review caught: remove_member and
+        // rotate_sender_key used to be two separate calls, so a caller could remove a member and
+        // forget to rotate, silently leaving the removed member able to ratchet their captured
+        // chain key forward by hand and decrypt future messages. remove_member now rotates
+        // internally — this test confirms a SINGLE call to remove_member (with no separate
+        // rotate_sender_key call) is sufficient for forward security.
         let sender = IdentityKeyPair::generate();
         let eve = IdentityKeyPair::generate();
 
@@ -595,21 +617,19 @@ mod tests {
         let eve_captured_key = group.sender_key_copy_for(&eve);
 
         group = group.remove_member(GroupMember(eve.public()));
-        // Deliberately NOT calling rotate_sender_key() here.
+        // No separate rotate_sender_key() call — remove_member alone must be sufficient.
 
-        let ciphertext = group.encrypt_as(&sender, b"removed but not rotated").unwrap();
+        let ciphertext = group.encrypt_as(&sender, b"removed and already protected").unwrap();
 
-        // Eve is gone from the wrapper list, so the ordinary decrypt_as path correctly fails...
+        // Eve is gone from the wrapper list, so the ordinary decrypt_as path fails...
         assert!(group.decrypt_as(&eve, &ciphertext).is_err());
 
-        // ...but her captured chain key can still ratchet forward by hand and derive this
-        // message's key, because the chain key itself was never invalidated. This is exactly
-        // why the module doc mandates rotate_sender_key immediately after remove_member.
-        let hk = Hkdf::<Sha256>::new(None, &eve_captured_key);
-        let mut forward_key = [0u8; 32];
-        hk.expand(b"msg", &mut forward_key).unwrap();
-        let mut forward_nonce = [0u8; 12];
-        hk.expand(b"nonce", &mut forward_nonce).unwrap();
-        assert_eq!(&ciphertext[0..12], &forward_nonce[..], "confirms the key was NOT rotated");
+        // ...AND her captured chain key can no longer ratchet forward to this message's key,
+        // because remove_member already rotated to a CSPRNG-fresh, unrelated chain key.
+        assert!(
+            group.try_decrypt_with_sender_key(&eve_captured_key, &ciphertext).is_err(),
+            "remove_member alone must invalidate a captured chain key, with no separate \
+             rotate_sender_key call required"
+        );
     }
 }
