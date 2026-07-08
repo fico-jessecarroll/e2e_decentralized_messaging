@@ -6,7 +6,7 @@ export default function App() {
     return (
         <>
             <Banner />
-            <Conversation />
+            <Conversation /><SafetyNumberVerification localIdentityKey={new Uint8Array(32)} remoteIdentityKey={new Uint8Array(32)} conversationId="demo" />
         </>
     );
 }
