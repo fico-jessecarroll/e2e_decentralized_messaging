@@ -56,6 +56,7 @@ export const Conversation: React.FC = () => {
                 }
             } catch (_) {}
         };
+        return () => ws.close();
     }, []);
 
     const sendMessage = async () => {
