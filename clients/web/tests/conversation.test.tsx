@@ -1,20 +1,23 @@
+// @vitest-environment jsdom
+import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
-// Mock StorageGate to return preset messages on load
+// Mutable fixture the mock reads at call time - each test sets it before
+// rendering. A `vi.mock` factory is hoisted and file-scoped (not scoped to
+// whichever test happens to be running), so a second `vi.mock` call inside a
+// test body would silently override this mock for every test in the file,
+// not just the one it's written in; this shared variable is the correct way
+// to vary the mocked return value per test.
+let mockStoredMessages: unknown = null;
+
+// Mock StorageGate matching the REAL API: get(store, id) / put(store, id,
+// value), both already (de)serializing JSON internally - no .set() method
+// exists on the real class.
 vi.mock('../src/storage', () => {
-    const original = vi.importActual('../src/storage');
-    class MockStorageGate extends original.StorageGate {
+    class MockStorageGate {
         async open() { return Promise.resolve(); }
-        async get(name) {
-            if (name === 'messages') {
-                return JSON.stringify([
-                    { id: '1', body: 'hello', timestamp: 1700000000, sentByMe: true },
-                    { id: '2', body: 'hi back', timestamp: 1700000005, sentByMe: false }
-                ]);
-            }
-            return null;
-        }
-        async set(name, value) { return Promise.resolve(); }
+        async get(_store: string, _id: string) { return mockStoredMessages; }
+        async put(_store: string, _id: string, value: unknown) { mockStoredMessages = value; }
     }
     return { StorageGate: MockStorageGate };
 });
@@ -37,8 +40,7 @@ import { Conversation } from '../src/Conversation';
 
 describe('Conversation component', () => {
     test('renders empty state when no messages stored', async () => {
-        // Override mock to return null for get
-        vi.mock('../src/storage', () => ({ StorageGate: class { async open(){}; async get(){return null;} } }));
+        mockStoredMessages = null;
         render(<Conversation />);
         await waitFor(() => {
             expect(screen.getByText(/no messages yet/i)).toBeInTheDocument();
@@ -46,6 +48,10 @@ describe('Conversation component', () => {
     });
 
     test('renders loaded messages', async () => {
+        mockStoredMessages = [
+            { id: '1', body: 'hello', timestamp: 1700000000, sentByMe: true },
+            { id: '2', body: 'hi back', timestamp: 1700000005, sentByMe: false },
+        ];
         render(<Conversation />);
         await waitFor(() => {
             expect(screen.getByText(/hello/)).toBeInTheDocument();

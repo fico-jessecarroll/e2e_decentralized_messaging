@@ -9,7 +9,11 @@ export interface Message {
     sentByMe: boolean;
 }
 
-
+// StoreName is a type, not a runtime object - 'messages' is a plain string
+// literal that satisfies it. HISTORY_ID is the single record id this
+// component uses within that store (the whole message history is one blob).
+const MESSAGES_STORE: StoreName = 'messages';
+const HISTORY_ID = 'history';
 
 export const Conversation: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
@@ -23,8 +27,9 @@ export const Conversation: React.FC = () => {
         const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: new Uint8Array(32) });
         gate.open().then(async () => {
             try {
-                const stored = await gate.get(StoreName.messages);
-                if (stored) setMessages(JSON.parse(stored));
+                // StorageGate.get already returns the parsed value (or null).
+                const stored = await gate.get(MESSAGES_STORE, HISTORY_ID);
+                if (stored) setMessages(stored as Message[]);
                 loadedRef.current = true;
             } catch (e) {
                 console.error('storage load error', e);
@@ -36,7 +41,8 @@ export const Conversation: React.FC = () => {
     useEffect(() => {
         if (!loadedRef.current) return;
         const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: new Uint8Array(32) });
-        gate.open().then(() => gate.set(StoreName.messages, JSON.stringify(messages))).catch(console.error);
+        // StorageGate.put already serializes the value - don't stringify twice.
+        gate.open().then(() => gate.put(MESSAGES_STORE, HISTORY_ID, messages)).catch(console.error);
     }, [messages]);
 
     // Setup websocket transport
