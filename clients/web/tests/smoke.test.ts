@@ -5,7 +5,8 @@
 //!  - Warning about reduced threat model is shown before first use
 //!  - Negative: web client fails closed if IndexedDB/storage access is unavailable
 
-import { performSmokeFlow, threatModelWarning, StorageGate } from "../src";
+import { performSmokeFlow, threatModelWarning } from '../src/api';
+import { StorageGate } from '../src/storage';
 
 describe("web smoke flow", () => {
     test("desktop smoke flow roundtrip succeeds", async () => {
@@ -23,7 +24,7 @@ describe("web smoke flow", () => {
     test("fails closed if IndexedDB is unavailable", async () => {
         // Simulate IndexedDB missing: StorageGate.open() must throw rather
         // than fall back to a weaker in-memory store silently.
-        const gate = new StorageGate({ indexedDB: undefined });
+        const gate = new StorageGate({ indexedDB: undefined, keyBytes: new Uint8Array(32).buffer });
         await expect(gate.open()).rejects.toThrow(/storage unavailable/i);
     });
 });

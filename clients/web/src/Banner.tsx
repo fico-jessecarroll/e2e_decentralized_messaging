@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { threatModelWarning } from './index';
+import { threatModelWarning } from './api';
 
 const STORAGE_KEY = 'reducedThreatModelDismissed';
 
