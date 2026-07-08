@@ -5,6 +5,7 @@ edition.workspace = true
 description = "WASM bindings exposing the core to web clients"
 
 [lib]
+crate-type = ["cdylib", "rlib"]
 name = "core_bindings_wasm"
 path = "src/lib.rs"
 

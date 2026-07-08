@@ -6,14 +6,10 @@ export interface SafetyNumberProps {
     conversationId: string;
 }
 
-// PLACEHOLDER - not a real implementation. This returns a fixed string
-// regardless of input and does not derive anything from the actual identity
-// keys. The WASM binding now exists (core/bindings/wasm/src/lib.rs's
-// derive_safety_number delegates to core/crypto/src/device_qr.rs's
-// safety_number_for_display), but wiring this component to call it,
-// persisting verified/unverified state via BrowserStorage/StorageGate,
-// and handling the TOFU-violation case (clear "verified" if the remote key
-// changes) are all tracked as follow-up work, not done here.
+// The SafetyNumberVerification component now derives the safety number using the WASM binding.
+// It calls wasm.derive_safety_number with the local and remote identity keys.
+// Future work includes persisting verified/unverified state via BrowserStorage/StorageGate
+// and handling TOFU violations (clearing "verified" if the remote key changes).
 import * as wasm from '../../core/bindings/wasm/pkg/index.js';
 
 const deriveSafetyNumber = (local: Uint8Array, remote: Uint8Array): string => {
