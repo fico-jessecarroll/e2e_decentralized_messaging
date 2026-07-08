@@ -17,7 +17,7 @@ describe('Safety number derivation', () => {
 
     // Render component to ensure it uses the same function
     const { render } = await import('@testing-library/react');
-    const { SafetyNumberVerification } = await import('../../src/SafetyNumberVerification.tsx');
+    const { SafetyNumberVerification } = await import('../src/SafetyNumberVerification.tsx');
     const { getByText } = render(
       <SafetyNumberVerification localIdentityKey={local} remoteIdentityKey={remote} conversationId="conv1" />
     );
