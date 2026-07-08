@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from '../src/wasm_init';
 
-// wasm-bindgen's --target web output requires this async init to complete
+// wasm-bindgen's --target bundler output requires this async init to complete
 // before any other export (generate_identity, derive_safety_number) is
 // usable - see src/wasm_init.ts.
 beforeAll(async () => {
