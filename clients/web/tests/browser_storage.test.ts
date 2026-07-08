@@ -72,4 +72,24 @@ describe('BrowserStorage', () => {
         circular.self = circular;
         await expect(storage.setItem('identity', circular)).rejects.toThrow(/serializ/i);
     });
+
+    test('rejects empty password', () => {
+        expect(() => new BrowserStorage('')).toThrow(/invalid password/i);
+    });
+
+    test('salt persists across separate instances so the same password derives the same key', async () => {
+        // Regression guard: the PBKDF2 salt must be generated once and
+        // persisted (not freshly randomized per open()), or a second
+        // instance opening the same DB with the correct password would
+        // still derive a different key and fail to decrypt data the first
+        // instance wrote.
+        const writer = new BrowserStorage(PASSWORD);
+        await writer.open();
+        await writer.setItem('cross-instance', { ok: true });
+
+        const reader = new BrowserStorage(PASSWORD);
+        await reader.open();
+        const got = await reader.getItem<{ ok: boolean }>('cross-instance');
+        expect(got).toEqual({ ok: true });
+    });
 });

@@ -13,12 +13,15 @@ export class BrowserStorage {
     private db?: IDBDatabase;
     private key?: CryptoKey;
 
-    constructor(private password: string) {}
+    constructor(private password: string) {
+        if (!password) throw new Error('invalid password: must be non-empty');
+    }
 
     async open(): Promise<void> {
         if (!('indexedDB' in globalThis)) throw new Error('IndexedDB unavailable');
         this.db = await this.openDB();
-        this.key = await this.deriveKey(this.password);
+        const salt = await this.getOrCreateSalt();
+        this.key = await this.deriveKey(this.password, salt);
     }
 
     private async openDB(): Promise<IDBDatabase> {
@@ -28,12 +31,37 @@ export class BrowserStorage {
             req.onupgradeneeded = () => {
                 const db: IDBDatabase = req.result;
                 if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+                if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
             };
             req.onsuccess = () => resolve(req.result);
         });
     }
 
-    private async deriveKey(password: string): Promise<CryptoKey> {
+    // The PBKDF2 salt is not secret - it only needs to be unique per
+    // installation so a precomputed rainbow table can't be reused across
+    // every BrowserStorage instance. Generated once and persisted in
+    // plaintext alongside the (encrypted) kv store, since a salt used to
+    // derive the encryption key can't itself be encrypted with that key.
+    private async getOrCreateSalt(): Promise<Uint8Array> {
+        const db = this.db!;
+        const existing = await new Promise<Uint8Array | undefined>((resolve, reject) => {
+            const tx = db.transaction(['meta'], 'readonly');
+            const req = tx.objectStore('meta').get('salt');
+            req.onerror = () => reject(req.error || new Error('salt read failed'));
+            req.onsuccess = () => resolve(req.result as Uint8Array | undefined);
+        });
+        if (existing) return existing;
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(['meta'], 'readwrite');
+            const req = tx.objectStore('meta').put(salt, 'salt');
+            req.onerror = () => reject(req.error || new Error('salt write failed'));
+            req.onsuccess = () => resolve();
+        });
+        return salt;
+    }
+
+    private async deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
         const encoder = new TextEncoder();
         const keyMaterial = await crypto.subtle.importKey(
             'raw',
@@ -45,10 +73,7 @@ export class BrowserStorage {
         return crypto.subtle.deriveKey(
             {
                 name: 'PBKDF2',
-                salt: new Uint8Array([
-                    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-                    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-                ]).buffer as ArrayBuffer,
+                salt: salt.buffer as ArrayBuffer,
                 iterations: 100_000,
                 hash: 'SHA-256',
             },
