@@ -241,6 +241,7 @@ export const BackupPanel: React.FC<BackupPanelProps> = ({ storagePassword }) => 
                     type="file"
                     accept=".ecb,application/octet-stream"
                     disabled={busy}
+                    aria-label="Backup file"
                 />
                 <button onClick={handleImport} disabled={busy}>
                     Import Backup

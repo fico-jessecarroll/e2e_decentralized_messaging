@@ -157,18 +157,16 @@ beforeEach(() => {
         revokeObjectURL: vi.fn(),
     };
 
-    // Mock anchor click for download
-    const originalCreateElement = document.createElement.bind(document);
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-        if (tag === 'a') {
-            const anchor = originalCreateElement(tag);
-            Object.defineProperty(anchor, 'click', {
-                value: vi.fn(),
-                configurable: true,
-            });
-            return anchor;
+    // Mock anchor click for download — intercepting HTMLAnchorElement.prototype.click
+    // avoids the infinite recursion that occurs when spying on document.createElement
+    // (jsdom's internal createElement calls re-enter the spy).
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+        if (this.href) {
+            lastDownloadedUrl = this.href;
         }
-        return originalCreateElement(tag);
+        if (this.download) {
+            lastDownloadedFilename = this.download;
+        }
     });
 });
 
@@ -183,6 +181,11 @@ describe('BackupPanel UI', () => {
     });
 
     test('export calls exportBackup and triggers download', async () => {
+        // Pre-populate mock storage so collectKeyedRecords has data to export.
+        const storage = new BrowserStorage('test');
+        await storage.open();
+        await storage.setItem('identity', { id: 'abc', value: 42 });
+
         const mockBlob = new Uint8Array([1, 2, 3, 4, 5]);
         mockExportBackup.mockResolvedValue(mockBlob);
 
@@ -262,8 +265,8 @@ describe('BackupPanel UI', () => {
     });
 
     test('import with tampered file shows tampered error', async () => {
-        const { BackupError } = await import('../src/backup');
-        mockImportBackup.mockRejectedValue(new BackupError('Tampered'));
+        const { BackupError, BackupErrorKind } = await import('../src/backup');
+        mockImportBackup.mockRejectedValue(new BackupError(BackupErrorKind.Tampered));
 
         render(<BackupPanel storagePassword="test" />);
 
