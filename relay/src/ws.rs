@@ -18,18 +18,19 @@
 //!
 //! All messages are JSON text frames. Each request is a JSON object with a `op` field:
 //!
-//! - `{"op":"publish_prekey","recipient_id":"...","bundle":"<base64>","pow_nonce":"<base64>"}`
+//! - `{"op":"publish_prekey","recipient_id":"...","bundle":"<base64>","challenge_id":"<hex>","pow_solution":"<base64>"}`
 //!   → `{"ok":true}` or `{"ok":false,"error":"..."}`
 //! - `{"op":"lookup_prekey","recipient_id":"..."}`
 //!   → `{"ok":true,"bundle":"<base64>"}` or `{"ok":false,"error":"NotFound"}`
-//! - `{"op":"send_envelope","recipient_id":"...","envelope":"<base64>","pow_nonce":"<base64>"}`
+//! - `{"op":"send_envelope","recipient_id":"...","envelope":"<base64>","challenge_id":"<hex>","pow_solution":"<base64>"}`
 //!   → `{"ok":true}` or `{"ok":false,"error":"..."}`
 //! - `{"op":"pickup_envelope","recipient_id":"..."}`
 //!   → `{"ok":true,"envelope":"<base64>"}` or `{"ok":false,"error":"NotFound|Expired"}`
 //!
 //! The PoW challenge is issued out-of-band: the relay exposes a `challenge` op that
 //! returns the challenge wire bytes (see `pow::Challenge::to_wire`). The browser solves
-//! it and includes the solution as `pow_nonce` (base64) in publish/send requests.
+//! it and includes the solution as `pow_solution` (base64 of solution bytes) along
+//! with the `challenge_id` (hex of the challenge nonce) in publish/send requests.
 //!
 //! ## Security
 //!
@@ -100,8 +101,9 @@ enum WsRequest {
     #[serde(rename = "publish_prekey")]
     PublishPrekey {
         recipient_id: String,
-        bundle: String,   // base64
-        pow_nonce: String, // base64
+        bundle: String,       // base64
+        challenge_id: String,  // hex of challenge nonce
+        pow_solution: String,  // base64 of solution bytes
     },
     #[serde(rename = "lookup_prekey")]
     LookupPrekey {
@@ -110,8 +112,9 @@ enum WsRequest {
     #[serde(rename = "send_envelope")]
     SendEnvelope {
         recipient_id: String,
-        envelope: String,  // base64
-        pow_nonce: String, // base64
+        envelope: String,      // base64
+        challenge_id: String,  // hex of challenge nonce
+        pow_solution: String,  // base64 of solution bytes
     },
     #[serde(rename = "pickup_envelope")]
     PickupEnvelope {
@@ -327,7 +330,8 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
         WsRequest::PublishPrekey {
             recipient_id,
             bundle,
-            pow_nonce,
+            challenge_id,
+            pow_solution,
         } => {
             // 1. Rate limit
             {
@@ -343,7 +347,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
                 }
             }
             // 2. PoW verification
-            if let Err(e) = verify_pow(&pow_nonce, &recipient_id, &state).await {
+            if let Err(e) = verify_pow(&challenge_id, &pow_solution, &state).await {
                 warn!(
                     recipient = %truncate_id(&recipient_id),
                     "ws: pow failed on publish_prekey: {e}"
@@ -394,7 +398,8 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
         WsRequest::SendEnvelope {
             recipient_id,
             envelope,
-            pow_nonce,
+            challenge_id,
+            pow_solution,
         } => {
             // 1. Rate limit
             {
@@ -410,7 +415,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
                 }
             }
             // 2. PoW verification
-            if let Err(e) = verify_pow(&pow_nonce, &recipient_id, &state).await {
+            if let Err(e) = verify_pow(&challenge_id, &pow_solution, &state).await {
                 warn!(
                     recipient = %truncate_id(&recipient_id),
                     "ws: pow failed on send_envelope: {e}"
@@ -460,28 +465,18 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
 /// Verify a PoW solution submitted by the client.
 ///
 /// The client must first request a challenge (which returns challenge_id + wire bytes),
-/// solve it, and include the solution as `pow_nonce` (base64) in the request.
+/// solve it, and include the solution as `pow_solution` (base64 of solution bytes)
+/// along with the `challenge_id` (hex of the challenge nonce) in the request.
 ///
-/// The challenge_id is derived from the recipient_id — we store challenges keyed by
-/// their nonce hex and look them up. The client must include the challenge_id in
-/// the pow_nonce field as `challenge_id:solution` (both base64).
-///
-/// Actually, to keep the wire protocol simple, we encode the challenge_id and solution
-/// together: `pow_nonce = base64(challenge_id_hex || ":" || solution_bytes)`.
+/// The challenge is single-use: it is removed from the active set on lookup, preventing
+/// replay. The solution bytes are base64-decoded (not passed through UTF-8 string
+/// conversion) to avoid corruption of binary solution values.
 async fn verify_pow(
-    pow_nonce: &str,
-    recipient_id: &str,
+    challenge_id: &str,
+    pow_solution: &str,
     state: &Arc<WsState>,
 ) -> Result<(), String> {
-    let decoded = b64_decode(pow_nonce).map_err(|e| format!("base64 decode: {e}"))?;
-    let decoded_str = String::from_utf8(decoded)
-        .map_err(|_| "pow_nonce is not valid UTF-8".to_string())?;
-    let parts: Vec<&str> = decoded_str.splitn(2, ':').collect();
-    if parts.len() != 2 {
-        return Err("pow_nonce must be challenge_id:solution".to_string());
-    }
-    let challenge_id = parts[0];
-    let solution = parts[1].as_bytes();
+    let solution = b64_decode(pow_solution).map_err(|e| format!("solution base64 decode: {e}"))?;
 
     let challenge = {
         let mut challenges = state.challenges.lock().await;
@@ -490,18 +485,12 @@ async fn verify_pow(
             .ok_or_else(|| "challenge not found or already used".to_string())?
     };
 
-    pow::verify(&challenge, solution)
-        .map_err(|e: PowError| match e {
-            PowError::Invalid { difficulty } => {
-                format!("invalid solution ({difficulty} bits)")
-            }
-            PowError::MalformedChallenge { reason } => format!("malformed challenge: {reason}"),
-        })
-        .map_err(|e| {
-            // Bind the challenge_id to the recipient_id for audit context.
-            let _ = recipient_id;
-            e
-        })
+    pow::verify(&challenge, &solution).map_err(|e: PowError| match e {
+        PowError::Invalid { difficulty } => {
+            format!("invalid solution ({difficulty} bits)")
+        }
+        PowError::MalformedChallenge { reason } => format!("malformed challenge: {reason}"),
+    })
 }
 
 /// Handle a single WebSocket connection.

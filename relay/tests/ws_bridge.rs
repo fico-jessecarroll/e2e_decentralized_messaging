@@ -13,11 +13,9 @@
 //! - Browser client must fail closed (return an error, not silently drop) if the relay
 //!   connection is unavailable at send time.
 
-use futures::StreamExt;
-use relay::pow::{self, Challenge};
+use futures::{SinkExt, StreamExt};
 use relay::ws;
 use serde_json::Value;
-use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::connect_async;
 
@@ -84,19 +82,9 @@ async fn solve_challenge(
         challenge_wire[2 + context_len + 16 + 3],
     ]);
 
-    let challenge = Challenge::new(b"ws-relay-v1", difficulty);
-    // Override the nonce to match the issued challenge
-    let mut challenge = challenge;
-    // We need to set the nonce — but Challenge's nonce is private. Instead, solve
-    // using the raw preimage approach.
-    // Actually, we can reconstruct via the public API: Challenge::new generates a
-    // random nonce. We need to use the wire bytes directly. Let's use pow::solve
-    // with a reconstructed challenge. Since we can't set the nonce, we'll solve
-    // using the meets_difficulty function directly.
-    // The simplest approach: use the challenge from the state. But we can't access
-    // the relay's internal state from the test. So let's solve it manually.
-
-    // Build preimage: context || nonce
+    // The Challenge struct's nonce is private, so we can't reconstruct it from
+    // wire bytes via the public API. Instead, we solve the PoW directly using
+    // the raw preimage (context || nonce) extracted from the wire bytes.
     let mut preimage = Vec::new();
     preimage.extend_from_slice(&challenge_wire[2..2 + context_len]);
     preimage.extend_from_slice(nonce);
