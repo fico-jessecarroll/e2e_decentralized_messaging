@@ -16,6 +16,7 @@ const MESSAGES_STORE: StoreName = 'messages';
 const HISTORY_ID = 'history';
 
 export const Conversation: React.FC = () => {
+    // Render UI
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [status, setStatus] = useState<string>('');
@@ -54,6 +55,14 @@ export const Conversation: React.FC = () => {
             try {
                 const parsed = JSON.parse(msg);
                 if (parsed.type === 'message') {
+                    const newMsg: Message = {
+                        id: parsed.id,
+                        body: parsed.body,
+                        timestamp: parsed.timestamp,
+                        sentByMe: false
+                    };
+                    setMessages(prev => [...prev, newMsg]);
+                }
                     const newMsg: Message = {
                         id: parsed.id,
                         body: parsed.body,
