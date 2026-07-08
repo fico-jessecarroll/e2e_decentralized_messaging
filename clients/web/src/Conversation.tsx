@@ -9,13 +9,14 @@ export interface Message {
     sentByMe: boolean;
 }
 
-const STORAGE_KEY = 'messages';
+
 
 export const Conversation: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [status, setStatus] = useState<string>('');
     const [transportReady, setTransportReady] = useState<boolean>(false);
+    const loadedRef = React.useRef(false);
 
     // Load history from storage on mount
     useEffect(() => {
@@ -24,6 +25,7 @@ export const Conversation: React.FC = () => {
             try {
                 const stored = await gate.get(StoreName.messages);
                 if (stored) setMessages(JSON.parse(stored));
+                loadedRef.current = true;
             } catch (e) {
                 console.error('storage load error', e);
             }
@@ -32,6 +34,7 @@ export const Conversation: React.FC = () => {
 
     // Persist messages whenever they change
     useEffect(() => {
+        if (!loadedRef.current) return;
         const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: new Uint8Array(32) });
         gate.open().then(() => gate.set(StoreName.messages, JSON.stringify(messages))).catch(console.error);
     }, [messages]);
