@@ -193,8 +193,11 @@ impl WsResponse {
 }
 
 /// Decode a base64 string into bytes. Uses standard base64 (with padding).
+///
+/// **Security**: invalid characters are rejected (not silently skipped). This
+/// prevents malformed or malicious input from decoding to unexpected bytes that
+/// could bypass downstream validation.
 pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
-    // Simple base64 decoder without external dependency.
     let lookup = |c: u8| -> Option<u8> {
         match c {
             b'A'..=b'Z' => Some(c - b'A'),
@@ -205,9 +208,29 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
             _ => None,
         }
     };
+    // Strip whitespace (newlines, spaces, carriage returns) which is valid per RFC 2045.
     let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
     if bytes.is_empty() {
         return Ok(Vec::new());
+    }
+    // Reject invalid characters upfront — do NOT silently skip them.
+    for &b in &bytes {
+        if b != b'=' && lookup(b).is_none() {
+            return Err(format!("invalid base64 character: 0x{b:02X}"));
+        }
+    }
+    // Validate padding: '=' only allowed at the end, and at most 2.
+    let non_pad_len = bytes.iter().take_while(|&&b| b != b'=').count();
+    let pad_count = bytes.len() - non_pad_len;
+    if pad_count > 2 {
+        return Err("invalid base64: more than 2 padding characters".to_string());
+    }
+    // Length must be a multiple of 4 (with padding).
+    if !bytes.len().is_multiple_of(4) {
+        return Err(format!(
+            "invalid base64 length: {} (must be multiple of 4)",
+            bytes.len()
+        ));
     }
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
     let mut iter = bytes.iter().peekable();
@@ -241,10 +264,6 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
             break;
         }
     }
-    // Validate by re-encoding — simpler: just check no invalid chars were encountered.
-    // The lookup function returns None for invalid chars, which would have caused
-    // incorrect decoding. We validate upfront:
-    let _ = out.len(); // suppress unused warning in some paths
     Ok(out)
 }
 
@@ -945,5 +964,26 @@ mod tests {
     #[test]
     fn truncate_id_long_truncated() {
         assert_eq!(truncate_id("very-long-recipient-id"), "very-lon…");
+    }
+
+    #[test]
+    fn b64_rejects_invalid_chars() {
+        // Invalid characters must be rejected, not silently skipped.
+        let result = b64_decode("AB!D");
+        assert!(result.is_err(), "invalid base64 char must be rejected");
+    }
+
+    #[test]
+    fn b64_rejects_bad_padding() {
+        // More than 2 padding chars is invalid.
+        let result = b64_decode("AB===");
+        assert!(result.is_err(), "excess padding must be rejected");
+    }
+
+    #[test]
+    fn b64_rejects_bad_length() {
+        // Length not a multiple of 4 is invalid.
+        let result = b64_decode("ABC");
+        assert!(result.is_err(), "bad length must be rejected");
     }
 }
