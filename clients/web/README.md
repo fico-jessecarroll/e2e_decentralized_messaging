@@ -5,7 +5,7 @@
 The web client consumes the shared Rust core via WASM bindings (`core/bindings/wasm`). Building and running the client requires:
 
 * **Rust** with the `wasm32-unknown-unknown` target installed (e.g., `rustup target add wasm32-unknown-unknown`).
-* **wasm-pack** (installed via npm or Cargo). The build scripts invoke `wasm-pack build --target web` to generate ES‑module bindings.
+* **wasm-pack** (installed via npm or Cargo). The build scripts invoke `wasm-pack build --target bundler` to generate ES‑module bindings.
 
 These prerequisites are only needed for local development and CI builds; the published NPM package does not contain the generated WASM artifacts.
 
