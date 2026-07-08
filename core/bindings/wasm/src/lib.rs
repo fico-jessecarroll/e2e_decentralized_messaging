@@ -12,6 +12,16 @@
 //! `establish_with_malformed_prekey` mirrors desktop's `establish_with_malformed_prekey` contract:
 //! it deliberately tampers a bundle and asserts the failure surfaces as a structured `WasmError`,
 //! never a panic across the WASM boundary.
+//!
+//! ## Double Ratchet encrypt/decrypt
+//!
+//! `create_receiver_session` constructs a receiver (Bob) session from an identity — the
+//! counterpart to `establish_session_from_bundle` (which constructs a sender/Alice session).
+//! `encrypt_message` encrypts plaintext on an established sender session, returning the
+//! self-describing wire envelope. `decrypt_message` decrypts an envelope on a receiver session,
+//! returning the plaintext. All error paths — tampered ciphertext (AEAD MAC failure),
+//! mismatched session, malformed/truncated envelope — surface as a structured `WasmError`,
+//! never a panic across the WASM boundary.
 
 use wasm_bindgen::prelude::*;
 
@@ -63,7 +73,6 @@ impl From<SessionError> for WasmError {
 /// An opaque handle to an established PQXDH session. Wraps the real Rust session state —
 /// wasm-bindgen passes struct instances by value/reference directly, no serialization step.
 #[wasm_bindgen]
-#[allow(dead_code)] // encrypt/decrypt is a separate follow-on story
 pub struct SessionHandle {
     inner: DoubleRatchetSession,
 }
@@ -76,9 +85,112 @@ impl std::fmt::Debug for SessionHandle {
 
 #[wasm_bindgen]
 impl SessionHandle {
-    // The session handle is opaque to JS — no methods are exposed here yet. Double Ratchet
-    // encrypt/decrypt is a separate follow-on story. The handle exists so session establishment
-    // returns a concrete typed value JS can hold and pass back, not a raw JsValue.
+    // The session handle is opaque to JS — no getter methods are exposed. The handle exists
+    // so session establishment returns a concrete typed value JS can hold and pass back, not a
+    // raw JsValue. Encrypt/decrypt are free functions below that take &mut SessionHandle.
+}
+
+// ---------------------------------------------------------------------------
+// Receiver session creation
+// ---------------------------------------------------------------------------
+
+/// Construct a receiver (Bob) session from an identity keypair. The receiver publishes a
+/// prekey bundle (via [`publish_bundle_bytes`]) and then accepts inbound messages via
+/// [`decrypt_message`]. This is the counterpart to [`establish_session_from_bundle`], which
+/// constructs a sender (Alice) session.
+///
+/// # Errors
+///
+/// Returns `WasmError` if prekey generation or store initialization fails. In practice this
+/// never happens with a freshly generated identity, but the error path is wired so a failure
+/// surfaces as a structured error, never a panic.
+#[wasm_bindgen]
+pub fn create_receiver_session(
+    identity_handle: &IdentityHandle,
+) -> Result<SessionHandle, WasmError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
+
+    let session = runtime.block_on(async {
+        DoubleRatchetSession::new_bob(identity_handle.inner.as_libsignal())
+            .await
+            .map_err(WasmError::from)
+    })?;
+
+    Ok(SessionHandle { inner: session })
+}
+
+/// Serialize the prekey bundle from an established receiver (Bob) session to a self-delimiting
+/// byte vector. The bundle is generated from the *same* session state that will later decrypt
+/// messages — so a sender who establishes from these bytes and encrypts will produce envelopes
+/// this session can decrypt. Use [`generate_prekey_bundle`] when you only need the bundle bytes
+/// (the receiver session is not retained); use this when you need both the bundle and the
+/// session handle for a full encrypt/decrypt round-trip.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "Session"` if the session is not a publisher (i.e. it was
+/// constructed as a sender via [`establish_session_from_bundle`]) or if serialization fails.
+/// Never panics.
+#[wasm_bindgen]
+pub fn publish_bundle_bytes(session: &SessionHandle) -> Result<Vec<u8>, WasmError> {
+    let bundle = session.inner.publish_bundle().map_err(WasmError::from)?;
+    session::bundle_to_bytes(&bundle).map_err(|e| WasmError::new("PreKey", &e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Double Ratchet encrypt/decrypt
+// ---------------------------------------------------------------------------
+
+/// Encrypt `plaintext` on an established sender (Alice) session, returning the self-describing
+/// wire envelope (sender hash + type tag + raw ciphertext). The session state is advanced
+/// (ratcheted) as part of encryption.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "Session"` if the session is receiver-only (no remote
+/// address to encrypt to) or if the Double Ratchet encryption fails. Never panics.
+#[wasm_bindgen]
+pub fn encrypt_message(
+    session: &mut SessionHandle,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, WasmError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
+
+    runtime.block_on(async {
+        session
+            .inner
+            .encrypt(plaintext)
+            .await
+            .map_err(WasmError::from)
+    })
+}
+
+/// Decrypt a self-describing wire envelope on a receiver (Bob) session, returning the plaintext.
+/// Fails closed on any malformed envelope, identity-hash mismatch, missing session, untrusted
+/// identity, or MAC/AEAD authentication failure — no plaintext is produced on error.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "Session"` if the envelope is malformed/truncated, the
+/// sender hash does not match the bound identity, no session exists for the sender, or AEAD
+/// authentication fails (tampered ciphertext). Never panics.
+#[wasm_bindgen]
+pub fn decrypt_message(session: &mut SessionHandle, envelope: &[u8]) -> Result<Vec<u8>, WasmError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
+
+    runtime.block_on(async {
+        session
+            .inner
+            .decrypt(envelope)
+            .await
+            .map_err(WasmError::from)
+    })
 }
 
 // ---------------------------------------------------------------------------
