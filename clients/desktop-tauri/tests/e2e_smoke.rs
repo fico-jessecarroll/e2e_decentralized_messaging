@@ -11,11 +11,18 @@ async fn two_clients_exchange_and_decrypt_verified_message() {
     let alice_id = generate_identity_key_pair();
     let bob_id = generate_identity_key_pair();
 
-    let mut bob = DoubleRatchetSession::new_bob(&bob_id).await.expect("bob session");
+    let mut bob = DoubleRatchetSession::new_bob(&bob_id)
+        .await
+        .expect("bob session");
     let bundle = bob.publish_bundle().expect("bob publishes bundle");
 
-    let mut alice = DoubleRatchetSession::new_alice(&alice_id, &bundle).await.expect("alice session");
-    let ciphertext = alice.encrypt(b"hello bob, verified!").await.expect("alice encrypts");
+    let mut alice = DoubleRatchetSession::new_alice(&alice_id, &bundle)
+        .await
+        .expect("alice session");
+    let ciphertext = alice
+        .encrypt(b"hello bob, verified!")
+        .await
+        .expect("alice encrypts");
     let plaintext = bob.decrypt(&ciphertext).await.expect("bob decrypts");
     assert_eq!(plaintext, b"hello bob, verified!");
 }

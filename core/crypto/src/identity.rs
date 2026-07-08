@@ -45,6 +45,13 @@ impl IdentityKeyPair {
         PublicIdentityKey(self.0.identity_key().serialize())
     }
 
+    /// Borrow the underlying libsignal `IdentityKeyPair`. Needed by callers (e.g. the WASM
+    /// binding) that pass the identity into `DoubleRatchetSession::new_bob` / `new_alice`, which
+    /// take `&libsignal_protocol::IdentityKeyPair` directly.
+    pub fn as_libsignal(&self) -> &libsignal_protocol::IdentityKeyPair {
+        &self.0
+    }
+
     /// Open a blob previously sealed to this keypair's public key with [`PublicIdentityKey::seal`].
     ///
     /// Fails closed: any structural or authentication failure returns [`SealError`] and no

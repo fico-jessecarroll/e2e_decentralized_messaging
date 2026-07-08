@@ -17,8 +17,14 @@ fn renders_sent_and_received_messages_with_timestamps() {
 
     let rendered = render_conversation(&state);
     assert!(rendered.contains("hello"), "sent message body must render");
-    assert!(rendered.contains("hi back"), "received message body must render");
-    assert!(rendered.contains("2023-11-14"), "timestamp must render in human form");
+    assert!(
+        rendered.contains("hi back"),
+        "received message body must render"
+    );
+    assert!(
+        rendered.contains("2023-11-14"),
+        "timestamp must render in human form"
+    );
 }
 
 #[test]

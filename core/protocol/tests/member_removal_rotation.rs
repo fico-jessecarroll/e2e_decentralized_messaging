@@ -5,7 +5,7 @@
 //!  - Negative (primary case): a removed member cannot decrypt any message sent after their removal, even with the old key
 
 use crypto::identity::IdentityKeyPair;
-use protocol::group::{GroupSession, GroupMember};
+use protocol::group::{GroupMember, GroupSession};
 
 #[test]
 fn remaining_members_can_decrypt_messages_sent_after_rotation() {
@@ -18,9 +18,13 @@ fn remaining_members_can_decrypt_messages_sent_after_rotation() {
         .add_member(GroupMember(bob.public()))
         .rotate_sender_key();
 
-    let ciphertext = group.encrypt_as(&sender, b"after rotation").expect("encrypt");
+    let ciphertext = group
+        .encrypt_as(&sender, b"after rotation")
+        .expect("encrypt");
 
-    let plain_a = group.decrypt_as(&alice, &ciphertext).expect("alice decrypts");
+    let plain_a = group
+        .decrypt_as(&alice, &ciphertext)
+        .expect("alice decrypts");
     let plain_b = group.decrypt_as(&bob, &ciphertext).expect("bob decrypts");
     assert_eq!(plain_a, b"after rotation");
     assert_eq!(plain_b, b"after rotation");
@@ -46,7 +50,9 @@ fn removed_member_cannot_decrypt_messages_sent_after_their_removal() {
     group = group.remove_member(GroupMember(eve.public()));
     group = group.rotate_sender_key();
 
-    let ciphertext = group.encrypt_as(&sender, b"eve is gone, this is private").expect("encrypt");
+    let ciphertext = group
+        .encrypt_as(&sender, b"eve is gone, this is private")
+        .expect("encrypt");
 
     // Eve with the OLD key cannot decrypt.
     let result_old = group.try_decrypt_with_sender_key(&old_eve_key, &ciphertext);

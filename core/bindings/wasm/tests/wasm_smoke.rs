@@ -4,14 +4,17 @@
 //!  - WASM module builds and exposes the same core API surface
 //!  - Negative: documents and tests the reduced key-storage security model in the browser (no secure enclave)
 
-use core_bindings_wasm::api::{generate_identity, document_browser_threat_model, BrowserThreatModel};
+use core_bindings_wasm::{document_browser_threat_model, generate_identity, BrowserThreatModel};
 
 #[test]
 fn wasm_module_exposes_same_core_api_surface_as_native() {
     // The function names below must match the native core API. If a name
     // diverges between WASM and native, the binding contract is broken.
     let id = generate_identity();
-    assert!(!id.public_bytes().is_empty(), "WASM generate_identity must produce a key");
+    assert!(
+        !id.public_bytes().is_empty(),
+        "WASM generate_identity must produce a key"
+    );
 }
 
 #[test]

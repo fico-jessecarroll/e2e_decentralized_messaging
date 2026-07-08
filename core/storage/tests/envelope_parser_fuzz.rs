@@ -13,16 +13,20 @@ proptest! {
 /// Explicit boundary-case tests for documentation and quick sanity checks.
 #[test]
 fn empty_input() {
-    assert!(matches!(parse_envelope(&[]), Err(StoreError::Corrupted { .. })),
-            "empty input should be corrupted");
+    assert!(
+        matches!(parse_envelope(&[]), Err(StoreError::Corrupted { .. })),
+        "empty input should be corrupted"
+    );
 }
 
 #[test]
 fn short_prefix() {
     // Less than 4 bytes, cannot contain a length prefix.
     let data = vec![1u8, 2, 3];
-    assert!(matches!(parse_envelope(&data), Err(StoreError::Corrupted { .. })),
-            "short prefix should be corrupted");
+    assert!(
+        matches!(parse_envelope(&data), Err(StoreError::Corrupted { .. })),
+        "short prefix should be corrupted"
+    );
 }
 
 #[test]
@@ -31,6 +35,8 @@ fn mismatched_length() {
     let mut data = Vec::new();
     data.extend_from_slice(&5u32.to_be_bytes());
     data.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-    assert!(matches!(parse_envelope(&data), Err(StoreError::Corrupted { .. })),
-            "mismatched length should be corrupted");
+    assert!(
+        matches!(parse_envelope(&data), Err(StoreError::Corrupted { .. })),
+        "mismatched length should be corrupted"
+    );
 }
