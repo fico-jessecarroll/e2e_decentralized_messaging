@@ -15,13 +15,21 @@ path = "src/lib.rs"
 [dependencies]
 libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "tokio", "macros", "ping", "relay"] }
 clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
-# CSPRNG for challenge nonces. A unique, unpredictable nonce per challenge is
+# CSPRNG for challenge nonices. A unique, unpredictable nonce per challenge is
 # what makes a solved proof-of-work non-replayable across challenges.
 rand = { workspace = true }
+# WebSocket listener: tokio-tungstenite provides an async WebSocket server that
+# integrates with the relay's existing tokio runtime. This is the browser-facing
+# transport bridge — browsers cannot open raw TCP/QUIC or run the libp2p stack.
+tokio-tungstenite = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
 
 [dev-dependencies]
 futures = "0.3"
+tokio-tungstenite = "0.29"
