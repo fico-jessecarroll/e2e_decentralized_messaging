@@ -61,10 +61,14 @@ export const Conversation: React.FC = () => {
 
     const sendMessage = async () => {
         if (!input.trim() || !transportReady) return;
-        await WebSocketTransport.sendMessage(input);
         const newMsg: Message = { id: crypto.randomUUID(), body: input, timestamp: Date.now(), sentByMe: true };
         setMessages(prev => [...prev, newMsg]);
         setInput('');
+        try {
+            await WebSocketTransport.sendMessage(input);
+        } catch (e) {
+            console.error('Failed to send', e);
+        }
     };
 
     return (
@@ -80,13 +84,12 @@ export const Conversation: React.FC = () => {
                 )}
             </ul>
             <input
-                placeholder="Type a message"
                 value={input}
                 onChange={e => setInput(e.target.value)}
+                disabled={!transportReady}
+                placeholder="Type a message"
             />
-            <button disabled={!transportReady || !input.trim()} onClick={sendMessage}>
-                Send
-            </button>
+            <button onClick={sendMessage} disabled={!transportReady || !input.trim()}>Send</button>
         </div>
     );
 };
