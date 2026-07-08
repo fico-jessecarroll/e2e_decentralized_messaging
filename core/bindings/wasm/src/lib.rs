@@ -539,10 +539,7 @@ pub fn group_decrypt(
 /// malformed or has the wrong length (not a decodable `IdentityKey`). Never
 /// panics — all error paths surface as a structured `WasmError`.
 #[wasm_bindgen]
-pub fn derive_safety_number(
-    local_key: &[u8],
-    remote_key: &[u8],
-) -> Result<String, WasmError> {
+pub fn derive_safety_number(local_key: &[u8], remote_key: &[u8]) -> Result<String, WasmError> {
     device_qr::safety_number_for_display(local_key, remote_key)
         .map_err(|e| WasmError::new("SafetyNumber", &e.to_string()))
 }
