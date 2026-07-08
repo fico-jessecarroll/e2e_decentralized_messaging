@@ -14,8 +14,15 @@ export interface SafetyNumberProps {
 // persisting verified/unverified state via BrowserStorage/StorageGate,
 // and handling the TOFU-violation case (clear "verified" if the remote key
 // changes) are all tracked as follow-up work, not done here.
+import * as wasm from '../../core/bindings/wasm/pkg/index.js';
+
 const deriveSafetyNumber = (local: Uint8Array, remote: Uint8Array): string => {
-    return '00000 00000 00000 00000 00000';
+    try {
+        return wasm.derive_safety_number(local, remote);
+    } catch (e) {
+        console.error('Failed to derive safety number', e);
+        throw e;
+    }
 };
 
 export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({ localIdentityKey, remoteIdentityKey, conversationId }) => {
