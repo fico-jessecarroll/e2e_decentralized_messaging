@@ -1,6 +1,14 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
+import { ensureWasmInit } from '../src/wasm_init';
+
+// wasm-bindgen's --target web output requires this async init to complete
+// before any other export (generate_identity, derive_safety_number) is
+// usable - see src/wasm_init.ts.
+beforeAll(async () => {
+  await ensureWasmInit();
+});
 
 // Helper to generate a key pair and get public bytes
 async function genPublicBytes(): Promise<Uint8Array> {
@@ -15,14 +23,16 @@ describe('Safety number derivation', () => {
     const remote = await genPublicBytes();
     const expected = wasm.derive_safety_number(local, remote);
 
-    // Render component to ensure it uses the same function
-    const { render } = await import('@testing-library/react');
+    // Render component to ensure it uses the same function. The component
+    // derives asynchronously (see SafetyNumberVerification.tsx), so wait for
+    // the derived text to appear rather than asserting immediately.
+    const { render, screen, waitFor } = await import('@testing-library/react');
     const { SafetyNumberVerification } = await import('../src/SafetyNumberVerification.tsx');
-    const { getByText } = render(
+    render(
       <SafetyNumberVerification localIdentityKey={local} remoteIdentityKey={remote} conversationId="conv1" />
     );
 
-    expect(getByText(expected)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
   });
 
   it('throws error on malformed key bytes', () => {

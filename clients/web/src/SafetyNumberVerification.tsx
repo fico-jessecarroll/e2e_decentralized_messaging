@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 export interface SafetyNumberProps {
     localIdentityKey: Uint8Array;
@@ -6,30 +6,45 @@ export interface SafetyNumberProps {
     conversationId: string;
 }
 
-// The SafetyNumberVerification component now derives the safety number using the WASM binding.
-// It calls wasm.derive_safety_number with the local and remote identity keys.
+// The SafetyNumberVerification component derives the safety number using the WASM binding
+// (wasm.derive_safety_number). The WASM module requires an async init step before any export
+// is usable (see wasm_init.ts), so derivation happens in an effect with a loading state rather
+// than synchronously during render.
 // Future work includes persisting verified/unverified state via BrowserStorage/StorageGate
 // and handling TOFU violations (clearing "verified" if the remote key changes).
 import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
-
-const deriveSafetyNumber = (local: Uint8Array, remote: Uint8Array): string => {
-    try {
-        return wasm.derive_safety_number(local, remote);
-    } catch (e) {
-        console.error('Failed to derive safety number', e);
-        throw e;
-    }
-};
+import { ensureWasmInit } from './wasm_init';
 
 export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({ localIdentityKey, remoteIdentityKey, conversationId }) => {
     const [verified, setVerified] = useState(false);
-    const safetyNumber = deriveSafetyNumber(localIdentityKey, remoteIdentityKey);
+    const [safetyNumber, setSafetyNumber] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        ensureWasmInit()
+            .then(() => {
+                if (cancelled) return;
+                setSafetyNumber(wasm.derive_safety_number(localIdentityKey, remoteIdentityKey));
+            })
+            .catch((e: unknown) => {
+                console.error('Failed to derive safety number', e);
+                if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [localIdentityKey, remoteIdentityKey]);
+
+    if (error) {
+        return <div role="alert">Safety number unavailable: {error}</div>;
+    }
 
     return (
         <div>
             <h3>Safety Number for {conversationId}</h3>
-            <p>{safetyNumber}</p>
-            <button onClick={() => setVerified(!verified)}>
+            <p>{safetyNumber === null ? 'Loading…' : safetyNumber}</p>
+            <button onClick={() => setVerified(!verified)} disabled={safetyNumber === null}>
                 {verified ? 'Unverify' : 'Verify'}
             </button>
         </div>
