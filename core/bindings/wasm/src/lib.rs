@@ -22,12 +22,22 @@
 //! returning the plaintext. All error paths — tampered ciphertext (AEAD MAC failure),
 //! mismatched session, malformed/truncated envelope — surface as a structured `WasmError`,
 //! never a panic across the WASM boundary.
+//!
+//! ## Sender Keys group encrypt/decrypt
+//!
+//! `group_create` / `group_add_member` / `group_remove_member` / `group_encrypt` /
+//! `group_decrypt` expose the Sender Keys group crypto from `protocol::group`. A
+//! `GroupHandle` wraps a `GroupSession`; membership is managed by public identity key
+//! bytes; encrypt/decrypt delegate to the core implementation. All error paths —
+//! non-member decrypt, removed-member post-rotation decrypt, malformed ciphertext —
+//! surface as a structured `WasmError`, never a panic.
 
 use wasm_bindgen::prelude::*;
 
-use crypto::identity::IdentityKeyPair;
+use crypto::identity::{IdentityKeyPair, PublicIdentityKey};
 use crypto::ratchet_session::{DoubleRatchetSession, SessionError};
 use crypto::session;
+use protocol::group::{GroupMember, GroupSession};
 
 /// A structured, JS-visible error — the WASM analogue of desktop's `ShellError`. Every core
 /// `Result::Err` that crosses the WASM boundary is mapped to this type so JS code can switch on
@@ -67,6 +77,19 @@ impl WasmError {
 impl From<SessionError> for WasmError {
     fn from(err: SessionError) -> Self {
         WasmError::new("Session", &err.to_string())
+    }
+}
+
+impl From<std::io::Error> for WasmError {
+    fn from(err: std::io::Error) -> Self {
+        // Map PermissionDenied (non-member / removed-member) to a distinct kind so JS can
+        // switch on it; everything else is a generic Group error.
+        let kind = if err.kind() == std::io::ErrorKind::PermissionDenied {
+            "NotMember"
+        } else {
+            "Group"
+        };
+        WasmError::new(kind, &err.to_string())
     }
 }
 
@@ -352,4 +375,132 @@ impl BrowserThreatModel {
 
 pub fn document_browser_threat_model() -> BrowserThreatModel {
     BrowserThreatModel::ReducedKeyStorage
+}
+
+// ---------------------------------------------------------------------------
+// Sender Keys group encrypt/decrypt (PLAN.md Phase 8 — follow-on story)
+//
+// Thin WASM facade over `protocol::group::GroupSession`. No cryptography is
+// implemented here — every function delegates to the core implementation. All
+// error paths surface as a structured `WasmError` (kind + message), never a
+// panic across the WASM boundary.
+// ---------------------------------------------------------------------------
+
+/// An opaque handle to a Sender Keys group session. Wraps the real Rust
+/// `GroupSession` state — wasm-bindgen passes struct instances by reference,
+/// no serialization step. JS code creates one via [`group_create`], mutates
+/// membership via [`group_add_member`]/[`group_remove_member`], and
+/// encrypts/decrypts via [`group_encrypt`]/[`group_decrypt`].
+#[wasm_bindgen]
+pub struct GroupHandle {
+    inner: GroupSession,
+}
+
+impl std::fmt::Debug for GroupHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GroupHandle").finish_non_exhaustive()
+    }
+}
+
+/// Create a new Sender Keys group session with the given sender identity. The
+/// sender's public key seeds the initial chain key (see `GroupSession::new`).
+///
+/// The returned `GroupHandle` has no members yet — call [`group_add_member`]
+/// before [`group_encrypt`] so the ciphertext carries per-member sealed
+/// wrappers that members can open.
+#[wasm_bindgen]
+pub fn group_create(sender: &IdentityHandle) -> GroupHandle {
+    GroupHandle {
+        inner: GroupSession::new(sender.inner.public()),
+    }
+}
+
+/// Add a member to the group by their public identity key bytes (33-byte
+/// compressed Curve25519 key, as returned by `IdentityHandle::public_bytes`).
+///
+/// Returns a new `GroupHandle` — `GroupSession::add_member` consumes `self`
+/// and returns a new session, so the caller must use the returned handle for
+/// subsequent operations.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "Group"` if the member key bytes are
+/// malformed (the core `seal` call during encrypt will reject them). Never
+/// panics.
+#[wasm_bindgen]
+pub fn group_add_member(group: &GroupHandle, member_pub_bytes: &[u8]) -> GroupHandle {
+    // Clone the inner session and add the member. GroupSession::add_member
+    // takes `self` by value, so we clone first (GroupSession derives Clone).
+    let pubkey = PublicIdentityKey::from_bytes(member_pub_bytes);
+    let new_session = group.inner.clone().add_member(GroupMember(pubkey));
+    GroupHandle { inner: new_session }
+}
+
+/// Remove a member from the group and rotate the sender key in the same
+/// operation — so the removal is forward-secure by default (the removed member
+/// cannot decrypt any message sent afterward, even with the old chain key).
+///
+/// Returns a new `GroupHandle` with the member removed and the chain key
+/// rotated to a fresh CSPRNG value.
+///
+/// # Errors
+///
+/// Never returns `Err` — removal of a non-existent member is a no-op (the
+/// core `retain` simply doesn't match). The function signature returns
+/// `GroupHandle` directly (not `Result`) to match the core API's infallible
+/// `remove_member`.
+#[wasm_bindgen]
+pub fn group_remove_member(group: &GroupHandle, member_pub_bytes: &[u8]) -> GroupHandle {
+    let pubkey = PublicIdentityKey::from_bytes(member_pub_bytes);
+    // remove_member internally rotates the sender key — see GroupSession::remove_member.
+    let new_session = group.inner.clone().remove_member(GroupMember(pubkey));
+    GroupHandle { inner: new_session }
+}
+
+/// Encrypt `plaintext` as the sender, returning the self-describing wire
+/// ciphertext (nonce | payload_len | AES-GCM payload | wrapper_count |
+/// per-member sealed wrappers). The session's chain key is ratcheted forward
+/// on every call, so no two messages reuse the same (key, nonce) pair.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "Group"` if the group exceeds the
+/// 255-member wire-format limit, or if sealing the per-message key to a
+/// member fails (malformed member key). Never panics.
+#[wasm_bindgen]
+pub fn group_encrypt(
+    group: &GroupHandle,
+    sender: &IdentityHandle,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, WasmError> {
+    group
+        .inner
+        .encrypt_as(&sender.inner, plaintext)
+        .map_err(WasmError::from)
+}
+
+/// Decrypt `ciphertext` as the given member identity. Finds the wrapper
+/// addressed to the member, unseals it with the member's private identity key
+/// to recover the per-message key, then decrypts the AES-GCM payload.
+///
+/// Fails closed on any malformed ciphertext, missing wrapper (non-member),
+/// or AEAD authentication failure — no plaintext is produced on error.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "NotMember"` if the caller is not a group
+/// member (no wrapper addressed to them, or they hold no private key to open
+/// it). Returns `WasmError` with `kind = "Group"` if the ciphertext is
+/// malformed/truncated or AEAD authentication fails (tampered ciphertext).
+/// Never panics.
+#[wasm_bindgen]
+pub fn group_decrypt(
+    group: &GroupHandle,
+    member: &IdentityHandle,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, WasmError> {
+    group
+        .inner
+        .decrypt_as(&member.inner, ciphertext)
+        .map_err(WasmError::from)
 }
