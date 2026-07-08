@@ -31,6 +31,16 @@
 //! bytes; encrypt/decrypt delegate to the core implementation. All error paths —
 //! non-member decrypt, removed-member post-rotation decrypt, malformed ciphertext —
 //! surface as a structured `WasmError`, never a panic.
+//!
+//! ## Safety-number / fingerprint derivation
+//!
+//! `derive_safety_number` takes two parties' serialized public identity key bytes
+//! (33-byte compressed Curve25519 keys, as returned by `IdentityHandle::public_bytes`)
+//! and returns the display-formatted safety number string — the real derivation from
+//! `crypto::device_qr::safety_number_for_display`, not a placeholder. The derivation is
+//! deterministic: the same two keys always produce the same string. Malformed or
+//! wrong-length key bytes surface as a structured `WasmError` with `kind = "SafetyNumber"`,
+//! never a panic.
 
 use wasm_bindgen::prelude::*;
 
