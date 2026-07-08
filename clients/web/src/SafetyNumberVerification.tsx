@@ -10,7 +10,7 @@ export interface SafetyNumberProps {
 // It calls wasm.derive_safety_number with the local and remote identity keys.
 // Future work includes persisting verified/unverified state via BrowserStorage/StorageGate
 // and handling TOFU violations (clearing "verified" if the remote key changes).
-import * as wasm from '../../core/bindings/wasm/pkg/index.js';
+import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
 
 const deriveSafetyNumber = (local: Uint8Array, remote: Uint8Array): string => {
     try {

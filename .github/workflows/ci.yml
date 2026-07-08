@@ -92,7 +92,4 @@ jobs:
           cache: npm
           cache-dependency-path: clients/web/package-lock.json
       - run: npm ci
-      - run: npm run prepare-wasm
-      - name: debug list generated wasm pkg
-        run: ls -la ../../core/bindings/wasm/pkg
-      - run: npx vitest run
+      - run: npm test

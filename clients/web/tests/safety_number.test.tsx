@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect } from 'vitest';
-import * as wasm from '../../core/bindings/wasm/pkg/index.js';
+import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
 
 // Helper to generate a key pair and get public bytes
 async function genPublicBytes(): Promise<Uint8Array> {

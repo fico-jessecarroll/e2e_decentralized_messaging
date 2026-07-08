@@ -3,7 +3,7 @@ import Banner from './Banner';
 import { Conversation } from './Conversation';
 import { SafetyNumberVerification } from './SafetyNumberVerification';
 import { BackupPanel } from './BackupPanel';
-import * as wasm from '../../core/bindings/wasm/pkg/index.js';
+import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
 
 // SafetyNumberVerification's deriveSafetyNumber calls the real
 // wasm.derive_safety_number binding, which requires 33-byte compressed
