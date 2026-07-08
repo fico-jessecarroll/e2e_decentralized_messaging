@@ -95,31 +95,25 @@ impl WsState {
 #[serde(tag = "op")]
 enum WsRequest {
     #[serde(rename = "challenge")]
-    Challenge {
-        recipient_id: String,
-    },
+    Challenge { recipient_id: String },
     #[serde(rename = "publish_prekey")]
     PublishPrekey {
         recipient_id: String,
         bundle: String,       // base64
-        challenge_id: String,  // hex of challenge nonce
-        pow_solution: String,  // base64 of solution bytes
+        challenge_id: String, // hex of challenge nonce
+        pow_solution: String, // base64 of solution bytes
     },
     #[serde(rename = "lookup_prekey")]
-    LookupPrekey {
-        recipient_id: String,
-    },
+    LookupPrekey { recipient_id: String },
     #[serde(rename = "send_envelope")]
     SendEnvelope {
         recipient_id: String,
-        envelope: String,      // base64
-        challenge_id: String,  // hex of challenge nonce
-        pow_solution: String,  // base64 of solution bytes
+        envelope: String,     // base64
+        challenge_id: String, // hex of challenge nonce
+        pow_solution: String, // base64 of solution bytes
     },
     #[serde(rename = "pickup_envelope")]
-    PickupEnvelope {
-        recipient_id: String,
-    },
+    PickupEnvelope { recipient_id: String },
 }
 
 /// Response frame: success or error.
@@ -209,7 +203,10 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
         }
     };
     // Strip whitespace (newlines, spaces, carriage returns) which is valid per RFC 2045.
-    let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
+    let bytes: Vec<u8> = s
+        .bytes()
+        .filter(|&b| b != b'\n' && b != b'\r' && b != b' ')
+        .collect();
     if bytes.is_empty() {
         return Ok(Vec::new());
     }
@@ -237,13 +234,9 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     while iter.peek().is_some() {
         let mut vals: [Option<u8>; 4] = [None; 4];
         for slot in vals.iter_mut() {
-            *slot = iter.next().and_then(|&c| {
-                if c == b'=' {
-                    None
-                } else {
-                    lookup(c)
-                }
-            });
+            *slot = iter
+                .next()
+                .and_then(|&c| if c == b'=' { None } else { lookup(c) });
         }
         let n = vals.iter().filter(|v| v.is_some()).count();
         if n == 0 {
@@ -324,8 +317,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
             // challenge-flooding DoS.
             {
                 let mut rl = state.rate_limiter.lock().await;
-                if let Err(RateLimitError::Exceeded { .. }) =
-                    rl.check(recipient_id.as_bytes(), now)
+                if let Err(RateLimitError::Exceeded { .. }) = rl.check(recipient_id.as_bytes(), now)
                 {
                     warn!(
                         recipient = %truncate_id(&recipient_id),
@@ -355,8 +347,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
             // 1. Rate limit
             {
                 let mut rl = state.rate_limiter.lock().await;
-                if let Err(RateLimitError::Exceeded { .. }) =
-                    rl.check(recipient_id.as_bytes(), now)
+                if let Err(RateLimitError::Exceeded { .. }) = rl.check(recipient_id.as_bytes(), now)
                 {
                     warn!(
                         recipient = %truncate_id(&recipient_id),
@@ -394,8 +385,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
             // prekey bundle is not a resource-intensive operation).
             {
                 let mut rl = state.rate_limiter.lock().await;
-                if let Err(RateLimitError::Exceeded { .. }) =
-                    rl.check(recipient_id.as_bytes(), now)
+                if let Err(RateLimitError::Exceeded { .. }) = rl.check(recipient_id.as_bytes(), now)
                 {
                     warn!(
                         recipient = %truncate_id(&recipient_id),
@@ -406,9 +396,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
             }
             let prekey_key = format!("prekey:{recipient_id}");
             match state.prekeys.pickup(&prekey_key) {
-                Ok(bundle_bytes) => {
-                    WsResponse::ok_bundle(b64_encode(&bundle_bytes))
-                }
+                Ok(bundle_bytes) => WsResponse::ok_bundle(b64_encode(&bundle_bytes)),
                 Err(StoreError::NotFound) => WsResponse::err("NotFound"),
                 Err(StoreError::Expired) => WsResponse::err("Expired"),
             }
@@ -423,8 +411,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
             // 1. Rate limit
             {
                 let mut rl = state.rate_limiter.lock().await;
-                if let Err(RateLimitError::Exceeded { .. }) =
-                    rl.check(recipient_id.as_bytes(), now)
+                if let Err(RateLimitError::Exceeded { .. }) = rl.check(recipient_id.as_bytes(), now)
                 {
                     warn!(
                         recipient = %truncate_id(&recipient_id),
@@ -460,8 +447,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
             // Pickup is a read — rate-limited but no PoW required.
             {
                 let mut rl = state.rate_limiter.lock().await;
-                if let Err(RateLimitError::Exceeded { .. }) =
-                    rl.check(recipient_id.as_bytes(), now)
+                if let Err(RateLimitError::Exceeded { .. }) = rl.check(recipient_id.as_bytes(), now)
                 {
                     warn!(
                         recipient = %truncate_id(&recipient_id),
@@ -471,9 +457,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
                 }
             }
             match state.store.pickup(&recipient_id) {
-                Ok(envelope_bytes) => {
-                    WsResponse::ok_envelope(b64_encode(&envelope_bytes))
-                }
+                Ok(envelope_bytes) => WsResponse::ok_envelope(b64_encode(&envelope_bytes)),
                 Err(StoreError::NotFound) => WsResponse::err("NotFound"),
                 Err(StoreError::Expired) => WsResponse::err("Expired"),
             }
@@ -513,10 +497,7 @@ async fn verify_pow(
 }
 
 /// Handle a single WebSocket connection.
-async fn handle_connection(
-    stream: WebSocketStream<TcpStream>,
-    state: Arc<WsState>,
-) {
+async fn handle_connection(stream: WebSocketStream<TcpStream>, state: Arc<WsState>) {
     let mut ws = stream;
     while let Some(msg_result) = ws.next().await {
         match msg_result {
@@ -526,14 +507,15 @@ async fn handle_connection(
                     Err(e) => {
                         warn!("ws: malformed request: {e}");
                         let resp = WsResponse::err(format!("MalformedRequest: {e}"));
-                        let _ = ws.send(Message::Text(serde_json::to_string(&resp).unwrap().into())).await;
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
+                            .await;
                         continue;
                     }
                 };
                 let resp = handle_request(req, &state).await;
-                let resp_json = serde_json::to_string(&resp).unwrap_or_else(|_| {
-                    r#"{"ok":false,"error":"InternalError"}"#.to_string()
-                });
+                let resp_json = serde_json::to_string(&resp)
+                    .unwrap_or_else(|_| r#"{"ok":false,"error":"InternalError"}"#.to_string());
                 if ws.send(Message::Text(resp_json.into())).await.is_err() {
                     break;
                 }
@@ -542,9 +524,7 @@ async fn handle_connection(
                 warn!("ws: binary frame rejected (text-only protocol)");
                 let resp = WsResponse::err("BinaryFramesNotAllowed");
                 let _ = ws
-                    .send(Message::Text(
-                        serde_json::to_string(&resp).unwrap().into(),
-                    ))
+                    .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
                     .await;
             }
             Ok(Message::Close(_)) => {
@@ -564,7 +544,10 @@ async fn handle_connection(
 ///
 /// This is the main entry point for the WS bridge. It spawns a task per connection,
 /// each sharing the same `Arc<WsState>` (store, rate limiter, challenges).
-pub async fn run_ws_listener(addr: SocketAddr, rate_limit_per_minute: u32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_ws_listener(
+    addr: SocketAddr,
+    rate_limit_per_minute: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     let state = Arc::new(WsState::new(rate_limit_per_minute));
     info!(addr = %addr, "ws relay listener started");
@@ -632,7 +615,10 @@ pub async fn start_ws_listener_for_test(rate_limit_per_minute: u32) -> WsListene
         }
     });
 
-    WsListenerHandle { addr, join: Some(join) }
+    WsListenerHandle {
+        addr,
+        join: Some(join),
+    }
 }
 
 // ── Browser-side client ──────────────────────────────────────────────────────
@@ -664,7 +650,10 @@ impl std::fmt::Display for WsClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WsClientError::ConnectionUnavailable => {
-                write!(f, "relay connection unavailable — message not sent (fail closed)")
+                write!(
+                    f,
+                    "relay connection unavailable — message not sent (fail closed)"
+                )
             }
             WsClientError::Relay(msg) => write!(f, "relay error: {msg}"),
             WsClientError::PowFailed(msg) => write!(f, "PoW solve failed: {msg}"),
@@ -685,7 +674,9 @@ impl std::error::Error for WsClientError {}
 /// rather than silently dropping the message.
 pub struct WsRelayClient {
     stream: Option<
-        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
     >,
 }
 
@@ -697,7 +688,9 @@ impl WsRelayClient {
     pub async fn connect(addr: SocketAddr) -> Result<Self, WsClientError> {
         let url = format!("ws://{addr}");
         match tokio_tungstenite::connect_async(url).await {
-            Ok((stream, _)) => Ok(Self { stream: Some(stream) }),
+            Ok((stream, _)) => Ok(Self {
+                stream: Some(stream),
+            }),
             Err(_) => Err(WsClientError::ConnectionUnavailable),
         }
     }
@@ -717,7 +710,10 @@ impl WsRelayClient {
     }
 
     /// Send a JSON request and return the JSON response.
-    async fn round_trip(&mut self, req: serde_json::Value) -> Result<serde_json::Value, WsClientError> {
+    async fn round_trip(
+        &mut self,
+        req: serde_json::Value,
+    ) -> Result<serde_json::Value, WsClientError> {
         let stream = self.stream_mut()?;
         stream
             .send(Message::Text(req.to_string().into()))
@@ -726,9 +722,8 @@ impl WsRelayClient {
         loop {
             match stream.next().await {
                 Some(Ok(Message::Text(text))) => {
-                    return serde_json::from_str(&text).map_err(|e| {
-                        WsClientError::Relay(format!("invalid JSON response: {e}"))
-                    });
+                    return serde_json::from_str(&text)
+                        .map_err(|e| WsClientError::Relay(format!("invalid JSON response: {e}")));
                 }
                 Some(Ok(_)) => continue,
                 Some(Err(_)) => return Err(WsClientError::ConnectionUnavailable),
@@ -771,8 +766,7 @@ impl WsRelayClient {
             .map_err(|e| WsClientError::Decode(format!("challenge wire: {e}")))?;
 
         // Wire format: context_len(2 BE) || context || nonce(16) || difficulty(4 BE)
-        let context_len =
-            u16::from_be_bytes([challenge_wire[0], challenge_wire[1]]) as usize;
+        let context_len = u16::from_be_bytes([challenge_wire[0], challenge_wire[1]]) as usize;
         let nonce = &challenge_wire[2 + context_len..2 + context_len + 16];
         let difficulty = u32::from_be_bytes([
             challenge_wire[2 + context_len + 16],
@@ -794,9 +788,7 @@ impl WsRelayClient {
             }
             counter += 1;
             if counter > (1u64 << 32) {
-                return Err(WsClientError::PowFailed(
-                    "exceeded iteration limit".into(),
-                ));
+                return Err(WsClientError::PowFailed("exceeded iteration limit".into()));
             }
         };
 
@@ -822,16 +814,16 @@ impl WsRelayClient {
             Ok(())
         } else {
             Err(WsClientError::Relay(
-                resp["error"].as_str().unwrap_or("unknown error").to_string(),
+                resp["error"]
+                    .as_str()
+                    .unwrap_or("unknown error")
+                    .to_string(),
             ))
         }
     }
 
     /// Look up a prekey bundle for the given recipient.
-    pub async fn lookup_prekey(
-        &mut self,
-        recipient_id: &str,
-    ) -> Result<Vec<u8>, WsClientError> {
+    pub async fn lookup_prekey(&mut self, recipient_id: &str) -> Result<Vec<u8>, WsClientError> {
         let req = serde_json::json!({
             "op": "lookup_prekey",
             "recipient_id": recipient_id,
@@ -871,16 +863,16 @@ impl WsRelayClient {
             Ok(())
         } else {
             Err(WsClientError::Relay(
-                resp["error"].as_str().unwrap_or("unknown error").to_string(),
+                resp["error"]
+                    .as_str()
+                    .unwrap_or("unknown error")
+                    .to_string(),
             ))
         }
     }
 
     /// Pick up a Sealed Sender envelope for the given recipient.
-    pub async fn pickup_envelope(
-        &mut self,
-        recipient_id: &str,
-    ) -> Result<Vec<u8>, WsClientError> {
+    pub async fn pickup_envelope(&mut self, recipient_id: &str) -> Result<Vec<u8>, WsClientError> {
         let req = serde_json::json!({
             "op": "pickup_envelope",
             "recipient_id": recipient_id,

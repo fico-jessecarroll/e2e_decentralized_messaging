@@ -16,13 +16,15 @@
 use futures::{SinkExt, StreamExt};
 use relay::ws;
 use serde_json::Value;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /// Connect to the WS listener and return the stream.
-async fn ws_connect(addr: std::net::SocketAddr) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+async fn ws_connect(
+    addr: std::net::SocketAddr,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let url = format!("ws://{addr}");
     let (stream, _response) = connect_async(url).await.expect("ws connect must succeed");
     stream
@@ -71,7 +73,10 @@ async fn solve_challenge(
     let resp = ws_round_trip(stream, req).await;
     assert_eq!(resp["ok"], true, "challenge request must succeed");
     let challenge_b64 = resp["challenge"].as_str().expect("challenge field");
-    let challenge_id = resp["challenge_id"].as_str().expect("challenge_id field").to_string();
+    let challenge_id = resp["challenge_id"]
+        .as_str()
+        .expect("challenge_id field")
+        .to_string();
 
     // 2. Decode and solve
     let challenge_wire = ws::b64_decode(challenge_b64).expect("challenge wire decode");
@@ -177,7 +182,10 @@ async fn ws_publish_and_lookup_prekey_bundle() {
     assert_eq!(resp["ok"], true, "lookup_prekey must succeed: {resp}");
     let fetched_b64 = resp["bundle"].as_str().expect("bundle field");
     let fetched = ws::b64_decode(fetched_b64).unwrap();
-    assert_eq!(fetched, bundle, "fetched bundle must match published bundle");
+    assert_eq!(
+        fetched, bundle,
+        "fetched bundle must match published bundle"
+    );
 }
 
 /// End-to-end: send a Sealed Sender envelope over WS, then pick it up.
@@ -213,7 +221,10 @@ async fn ws_send_and_pickup_sealed_sender_envelope() {
     assert_eq!(resp["ok"], true, "pickup_envelope must succeed: {resp}");
     let fetched_b64 = resp["envelope"].as_str().expect("envelope field");
     let fetched = ws::b64_decode(fetched_b64).unwrap();
-    assert_eq!(fetched, envelope, "fetched envelope must match sent envelope");
+    assert_eq!(
+        fetched, envelope,
+        "fetched envelope must match sent envelope"
+    );
 }
 
 // ── negative tests: PoW gate ──────────────────────────────────────────────────
@@ -313,7 +324,10 @@ async fn ws_rejects_requests_exceeding_rate_limit() {
     let resp = ws_round_trip(&mut stream, req).await;
     assert_eq!(resp["ok"], false, "3rd request must be rate-limited");
     assert!(
-        resp["error"].as_str().unwrap_or("").contains("RateLimitExceeded"),
+        resp["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("RateLimitExceeded"),
         "error must indicate rate limit, got: {resp}"
     );
 }
@@ -363,7 +377,10 @@ async fn ws_client_publish_and_lookup_prekey() {
         .lookup_prekey(recipient_id)
         .await
         .expect("lookup must succeed");
-    assert_eq!(fetched, bundle, "fetched bundle must match published bundle");
+    assert_eq!(
+        fetched, bundle,
+        "fetched bundle must match published bundle"
+    );
 }
 
 /// The WsRelayClient can send and pick up a Sealed Sender envelope end-to-end.
@@ -388,7 +405,10 @@ async fn ws_client_send_and_pickup_envelope() {
         .pickup_envelope(recipient_id)
         .await
         .expect("pickup must succeed");
-    assert_eq!(fetched, envelope, "fetched envelope must match sent envelope");
+    assert_eq!(
+        fetched, envelope,
+        "fetched envelope must match sent envelope"
+    );
 }
 
 /// The WsRelayClient must fail closed (return Err, not silently drop) when the
@@ -501,7 +521,10 @@ async fn ws_rejects_malformed_json() {
                 let resp: Value = serde_json::from_str(&text).expect("valid JSON");
                 assert_eq!(resp["ok"], false, "malformed JSON must be rejected");
                 assert!(
-                    resp["error"].as_str().unwrap_or("").contains("MalformedRequest"),
+                    resp["error"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("MalformedRequest"),
                     "error must indicate malformed request, got: {resp}"
                 );
                 return;
