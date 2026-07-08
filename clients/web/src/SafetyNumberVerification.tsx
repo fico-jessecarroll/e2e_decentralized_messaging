@@ -6,9 +6,15 @@ export interface SafetyNumberProps {
     conversationId: string;
 }
 
-// Placeholder for safety-number derivation – to be implemented.
+// PLACEHOLDER - not a real implementation. This returns a fixed string
+// regardless of input and does not derive anything from the actual identity
+// keys. The real derivation (core/crypto/src/device_qr.rs's
+// safety_number_for_display) is not yet exposed via the WASM bindings
+// (core/bindings/wasm/src/lib.rs has no safety-number function). Wiring this
+// up, persisting verified/unverified state via BrowserStorage/StorageGate,
+// and handling the TOFU-violation case (clear "verified" if the remote key
+// changes) are all tracked as follow-up work, not done here.
 const deriveSafetyNumber = (local: Uint8Array, remote: Uint8Array): string => {
-    // TODO: implement proper fingerprint algorithm using wasm binding.
     return '00000 00000 00000 00000 00000';
 };
 
