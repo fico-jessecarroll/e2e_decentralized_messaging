@@ -5,7 +5,7 @@
 //!  - Negative: a non-member cannot decrypt a group message
 
 use crypto::identity::IdentityKeyPair;
-use protocol::group::{GroupSession, GroupMember, NonMember};
+use protocol::group::{GroupMember, GroupSession, NonMember};
 
 #[test]
 fn all_group_members_can_decrypt_a_group_message() {
@@ -17,10 +17,16 @@ fn all_group_members_can_decrypt_a_group_message() {
         .add_member(GroupMember(member_a.public()))
         .add_member(GroupMember(member_b.public()));
 
-    let ciphertext = group.encrypt_as(&sender, b"group chat message").expect("encrypt");
+    let ciphertext = group
+        .encrypt_as(&sender, b"group chat message")
+        .expect("encrypt");
 
-    let plain_a = group.decrypt_as(&member_a, &ciphertext).expect("member a decrypts");
-    let plain_b = group.decrypt_as(&member_b, &ciphertext).expect("member b decrypts");
+    let plain_a = group
+        .decrypt_as(&member_a, &ciphertext)
+        .expect("member a decrypts");
+    let plain_b = group
+        .decrypt_as(&member_b, &ciphertext)
+        .expect("member b decrypts");
     assert_eq!(plain_a, b"group chat message");
     assert_eq!(plain_b, b"group chat message");
 }
@@ -31,10 +37,11 @@ fn non_member_cannot_decrypt_a_group_message() {
     let member = IdentityKeyPair::generate();
     let outsider = IdentityKeyPair::generate();
 
-    let group = GroupSession::new(sender.public())
-        .add_member(GroupMember(member.public()));
+    let group = GroupSession::new(sender.public()).add_member(GroupMember(member.public()));
 
-    let ciphertext = group.encrypt_as(&sender, b"private to the group").expect("encrypt");
+    let ciphertext = group
+        .encrypt_as(&sender, b"private to the group")
+        .expect("encrypt");
 
     let result = group.decrypt_as(&NonMember(outsider.public()), &ciphertext);
     assert!(

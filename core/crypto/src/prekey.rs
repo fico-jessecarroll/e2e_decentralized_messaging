@@ -270,10 +270,151 @@ impl PreKeyPool {
 /// (spec/proto/v0/prekey.proto `PreKeyBundle` — the wire-level message also carries device
 /// address, bundle version, and expiry, which belong to the protocol/transport layer fetching it;
 /// this is the crypto-verifiable core).
+#[derive(Debug)]
 pub struct PreKeyBundle {
     pub identity_key: IdentityKey,
     pub signed_pre_key: SignedPreKeyRecord,
     pub one_time_pre_key: Option<PreKeyRecord>,
+}
+
+/// A 4-byte big-endian length prefix, used by [`PreKeyBundle::to_bytes`] /
+/// [`PreKeyBundle::from_bytes`] to delimit the variable-length serialized segments. Four bytes
+/// is more than enough for any libsignal key record (all are well under 2^32 bytes) and keeps
+/// the format simple and alignment-free.
+fn write_len_prefixed(buf: &mut Vec<u8>, segment: &[u8]) {
+    let len = segment.len() as u32;
+    buf.extend_from_slice(&len.to_be_bytes());
+    buf.extend_from_slice(segment);
+}
+
+/// Read a 4-byte big-endian length prefix from `bytes` at `offset`, returning the length and the
+/// segment slice. Returns `None` if there aren't enough bytes for the length prefix or the
+/// declared segment.
+fn read_len_prefixed<'a>(bytes: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
+    // Bounds-check the 4-byte length prefix.  `*offset` is guaranteed <= bytes.len()
+    // by the caller's prior checks, so this subtraction cannot underflow.
+    if bytes.len() - *offset < 4 {
+        return None;
+    }
+    let len = u32::from_be_bytes([
+        bytes[*offset],
+        bytes[*offset + 1],
+        bytes[*offset + 2],
+        bytes[*offset + 3],
+    ]) as usize;
+    *offset += 4;
+    // Use checked subtraction to avoid integer overflow on 32-bit targets (wasm32)
+    // where `*offset + len` could wrap if `len` is a malicious u32::MAX.  After the
+    // `+= 4` above, `*offset <= bytes.len()` still holds, so `bytes.len() - *offset`
+    // cannot underflow.
+    let remaining = bytes.len() - *offset;
+    if len > remaining {
+        return None;
+    }
+    let segment = &bytes[*offset..*offset + len];
+    *offset += len;
+    Some(segment)
+}
+
+impl PreKeyBundle {
+    /// Serialize this bundle to a self-delimiting byte vector.
+    ///
+    /// The format is a simple length-prefixed concatenation of the three component byte segments:
+    ///
+    /// ```text
+    ///   [ identity_key_len : 4 bytes BE ]
+    ///   [ identity_key_bytes               ]
+    ///   [ signed_pre_key_len : 4 bytes BE ]
+    ///   [ signed_pre_key_bytes             ]
+    ///   [ one_time_pre_key_presence : 1 byte ]   // 0 = absent, 1 = present
+    ///   [ one_time_pre_key_len : 4 bytes BE ]    // only if present
+    ///   [ one_time_pre_key_bytes               ]  // only if present
+    /// ```
+    ///
+    /// This is an **internal** crate format — it does NOT match the `/spec` protobuf wire format,
+    /// which carries additional transport-layer fields (device address, bundle version, expiry)
+    /// that this struct explicitly excludes. It exists so the WASM binding can pass a bundle
+    /// across the JS boundary as opaque bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, PreKeyError> {
+        let mut buf = Vec::new();
+
+        // identity_key: IdentityKey::serialize() -> Box<[u8]> (infallible)
+        let identity_bytes = self.identity_key.serialize();
+        write_len_prefixed(&mut buf, &identity_bytes);
+
+        // signed_pre_key: GenericSignedPreKey::serialize() -> Result<Vec<u8>>
+        let signed_pre_key_bytes = self
+            .signed_pre_key
+            .serialize()
+            .map_err(|_| PreKeyError::MalformedKey)?;
+        write_len_prefixed(&mut buf, &signed_pre_key_bytes);
+
+        // one_time_pre_key: Option<PreKeyRecord> with a presence flag
+        match &self.one_time_pre_key {
+            Some(otpk) => {
+                buf.push(1u8); // present
+                let otpk_bytes = otpk.serialize().map_err(|_| PreKeyError::MalformedKey)?;
+                write_len_prefixed(&mut buf, &otpk_bytes);
+            }
+            None => {
+                buf.push(0u8); // absent
+            }
+        }
+
+        Ok(buf)
+    }
+
+    /// Deserialize a bundle from the byte vector produced by [`PreKeyBundle::to_bytes`].
+    ///
+    /// Returns [`PreKeyError::MalformedKey`] for any truncated, mis-length-prefixed, or
+    /// structurally invalid input — never panics. The caller SHOULD call
+    /// [`verify_pre_key_bundle`] on the result before using it for session establishment,
+    /// to confirm the signed prekey's signature verifies against the identity key.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PreKeyError> {
+        let mut offset = 0usize;
+
+        // identity_key
+        let identity_bytes =
+            read_len_prefixed(bytes, &mut offset).ok_or(PreKeyError::MalformedKey)?;
+        let identity_key =
+            IdentityKey::try_from(identity_bytes).map_err(|_| PreKeyError::MalformedKey)?;
+
+        // signed_pre_key
+        let signed_pre_key_bytes =
+            read_len_prefixed(bytes, &mut offset).ok_or(PreKeyError::MalformedKey)?;
+        let signed_pre_key = SignedPreKeyRecord::deserialize(signed_pre_key_bytes)
+            .map_err(|_| PreKeyError::MalformedKey)?;
+
+        // one_time_pre_key presence flag
+        if bytes.len() < offset + 1 {
+            return Err(PreKeyError::MalformedKey);
+        }
+        let presence = bytes[offset];
+        offset += 1;
+
+        let one_time_pre_key = match presence {
+            0 => None,
+            1 => {
+                let otpk_bytes =
+                    read_len_prefixed(bytes, &mut offset).ok_or(PreKeyError::MalformedKey)?;
+                let otpk =
+                    PreKeyRecord::deserialize(otpk_bytes).map_err(|_| PreKeyError::MalformedKey)?;
+                Some(otpk)
+            }
+            _ => return Err(PreKeyError::MalformedKey),
+        };
+
+        // Reject trailing bytes — a well-formed bundle consumes the entire input.
+        if offset != bytes.len() {
+            return Err(PreKeyError::MalformedKey);
+        }
+
+        Ok(Self {
+            identity_key,
+            signed_pre_key,
+            one_time_pre_key,
+        })
+    }
 }
 
 /// Verify a fetched prekey bundle's signed prekey against its claimed identity key. A sender
@@ -526,6 +667,159 @@ mod tests {
         assert_eq!(
             verify_pre_key_bundle(&bundle),
             Err(PreKeyError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn prekey_bundle_to_bytes_from_bytes_round_trips_with_one_time_prekey() {
+        let identity = IdentityKeyPair::generate(&mut OsRng.unwrap_err());
+        let signed_pre_key = generate_signed_pre_key(&identity, 1, now());
+        let one_time_pre_key = generate_one_time_pre_keys(0, 1).remove(0);
+        let bundle = PreKeyBundle {
+            identity_key: *identity.identity_key(),
+            signed_pre_key,
+            one_time_pre_key: Some(one_time_pre_key),
+        };
+
+        let bytes = bundle.to_bytes().expect("serialization must succeed");
+        let restored = PreKeyBundle::from_bytes(&bytes).expect("deserialization must succeed");
+
+        // Identity key round-trips exactly.
+        assert_eq!(
+            restored.identity_key.serialize(),
+            bundle.identity_key.serialize()
+        );
+        // Signed prekey round-trips: same id, same public key, same signature.
+        assert_eq!(
+            restored.signed_pre_key.id().unwrap(),
+            bundle.signed_pre_key.id().unwrap()
+        );
+        assert_eq!(
+            restored.signed_pre_key.public_key().unwrap().serialize(),
+            bundle.signed_pre_key.public_key().unwrap().serialize()
+        );
+        assert_eq!(
+            restored.signed_pre_key.signature().unwrap(),
+            bundle.signed_pre_key.signature().unwrap()
+        );
+        // One-time prekey round-trips.
+        assert!(restored.one_time_pre_key.is_some());
+        let otpk_restored = restored.one_time_pre_key.as_ref().unwrap();
+        let otpk_orig = bundle.one_time_pre_key.as_ref().unwrap();
+        assert_eq!(otpk_restored.id().unwrap(), otpk_orig.id().unwrap());
+        assert_eq!(
+            otpk_restored.public_key().unwrap().serialize(),
+            otpk_orig.public_key().unwrap().serialize()
+        );
+    }
+
+    #[test]
+    fn prekey_bundle_to_bytes_from_bytes_round_trips_without_one_time_prekey() {
+        let identity = IdentityKeyPair::generate(&mut OsRng.unwrap_err());
+        let signed_pre_key = generate_signed_pre_key(&identity, 1, now());
+        let bundle = PreKeyBundle {
+            identity_key: *identity.identity_key(),
+            signed_pre_key,
+            one_time_pre_key: None,
+        };
+
+        let bytes = bundle.to_bytes().expect("serialization must succeed");
+        let restored = PreKeyBundle::from_bytes(&bytes).expect("deserialization must succeed");
+
+        assert!(restored.one_time_pre_key.is_none());
+        assert_eq!(
+            restored.identity_key.serialize(),
+            bundle.identity_key.serialize()
+        );
+    }
+
+    #[test]
+    fn prekey_bundle_from_bytes_rejects_empty_input() {
+        let result = PreKeyBundle::from_bytes(&[]);
+        assert!(
+            matches!(result, Err(PreKeyError::MalformedKey)),
+            "empty input must be rejected as MalformedKey, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn prekey_bundle_from_bytes_rejects_truncated_input() {
+        let identity = IdentityKeyPair::generate(&mut OsRng.unwrap_err());
+        let signed_pre_key = generate_signed_pre_key(&identity, 1, now());
+        let one_time_pre_key = generate_one_time_pre_keys(0, 1).remove(0);
+        let bundle = PreKeyBundle {
+            identity_key: *identity.identity_key(),
+            signed_pre_key,
+            one_time_pre_key: Some(one_time_pre_key),
+        };
+
+        let bytes = bundle.to_bytes().expect("serialization must succeed");
+        // Truncate to half the length — must be rejected, not panicked.
+        let truncated = &bytes[..bytes.len() / 2];
+        let result = PreKeyBundle::from_bytes(truncated);
+        assert!(
+            matches!(result, Err(PreKeyError::MalformedKey)),
+            "truncated input must be rejected as MalformedKey, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn prekey_bundle_from_bytes_rejects_trailing_garbage() {
+        let identity = IdentityKeyPair::generate(&mut OsRng.unwrap_err());
+        let signed_pre_key = generate_signed_pre_key(&identity, 1, now());
+        let bundle = PreKeyBundle {
+            identity_key: *identity.identity_key(),
+            signed_pre_key,
+            one_time_pre_key: None,
+        };
+
+        let mut bytes = bundle.to_bytes().expect("serialization must succeed");
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let result = PreKeyBundle::from_bytes(&bytes);
+        assert!(
+            matches!(result, Err(PreKeyError::MalformedKey)),
+            "trailing garbage must be rejected as MalformedKey, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn prekey_bundle_from_bytes_rejects_invalid_presence_flag() {
+        let identity = IdentityKeyPair::generate(&mut OsRng.unwrap_err());
+        let signed_pre_key = generate_signed_pre_key(&identity, 1, now());
+        let bundle = PreKeyBundle {
+            identity_key: *identity.identity_key(),
+            signed_pre_key,
+            one_time_pre_key: None,
+        };
+
+        let mut bytes = bundle.to_bytes().expect("serialization must succeed");
+        // Overwrite the presence flag (the last byte for a no-otpk bundle) with an invalid value.
+        let last = bytes.len() - 1;
+        bytes[last] = 0x42;
+        let result = PreKeyBundle::from_bytes(&bytes);
+        assert!(
+            matches!(result, Err(PreKeyError::MalformedKey)),
+            "invalid presence flag must be rejected as MalformedKey, got: {result:?}"
+        );
+    }
+
+    /// Regression test for integer-overflow DoS on 32-bit targets (wasm32).
+    ///
+    /// A malicious peer controlling the bundle bytes can set the first length prefix
+    /// to `u32::MAX`.  On a 32-bit `usize` target, `offset + len` would overflow and
+    /// either panic (debug) or wrap (release), bypassing the bounds check.  The
+    /// checked-arithmetic fix must reject this as `Err`, never panic.
+    #[test]
+    fn prekey_bundle_from_bytes_rejects_u32_max_length_prefix() {
+        // Craft a bundle whose first length prefix is 0xFFFFFFFF.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // identity_key len = u32::MAX
+        bytes.extend_from_slice(&[0u8; 8]); // some filler so the buffer isn't empty
+
+        let result = PreKeyBundle::from_bytes(&bytes);
+        assert!(
+            matches!(result, Err(PreKeyError::MalformedKey)),
+            "u32::MAX length prefix must be rejected as MalformedKey, got: {result:?}"
         );
     }
 }

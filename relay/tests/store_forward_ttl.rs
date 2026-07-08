@@ -12,7 +12,9 @@ use std::time::Duration;
 fn stored_envelope_delivered_when_recipient_picks_up_within_ttl() {
     let store = RelayStore::new();
     let envelope = vec![0xAAu8; 256];
-    store.store("recipient-id", envelope.clone(), Duration::from_secs(60)).expect("store");
+    store
+        .store("recipient-id", envelope.clone(), Duration::from_secs(60))
+        .expect("store");
 
     let delivered = store.pickup("recipient-id").expect("pickup succeeds");
     assert_eq!(delivered, envelope);
@@ -24,7 +26,9 @@ fn relay_cannot_read_or_decrypt_stored_envelope_contents() {
     // on the envelope bytes (no decrypt, no parse, no read-as-string).
     let store = RelayStore::new();
     let envelope = vec![0xBB; 512];
-    store.store("recipient-id", envelope, Duration::from_secs(60)).expect("store");
+    store
+        .store("recipient-id", envelope, Duration::from_secs(60))
+        .expect("store");
 
     // The relay's documented API surface must consist only of: store / pickup / purge / count.
     let documented: &[&str] = &["store", "pickup", "purge", "count"];
@@ -46,7 +50,9 @@ fn relay_cannot_read_or_decrypt_stored_envelope_contents() {
 #[test]
 fn envelope_expired_past_ttl_is_purged_and_not_delivered() {
     let store = RelayStore::new();
-    store.store("recipient-id", vec![0xCC; 128], Duration::from_millis(0)).expect("store");
+    store
+        .store("recipient-id", vec![0xCC; 128], Duration::from_millis(0))
+        .expect("store");
 
     // Wait long enough for the TTL to elapse deterministically.
     std::thread::sleep(Duration::from_millis(5));

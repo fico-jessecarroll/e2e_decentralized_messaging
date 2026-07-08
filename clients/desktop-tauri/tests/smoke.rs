@@ -12,7 +12,10 @@ fn tauri_shell_compiles_against_core_crypto_api() {
     // This test forces the core API surface to be reachable from the client crate.
     let id = IdentityKeyPair::generate();
     let pub_bytes = id.public().to_bytes();
-    assert!(!pub_bytes.is_empty(), "core identity API reachable from client");
+    assert!(
+        !pub_bytes.is_empty(),
+        "core identity API reachable from client"
+    );
 }
 
 #[test]
