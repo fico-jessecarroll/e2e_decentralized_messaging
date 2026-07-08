@@ -34,6 +34,7 @@
 
 use wasm_bindgen::prelude::*;
 
+use crypto::device_qr;
 use crypto::identity::{IdentityKeyPair, PublicIdentityKey};
 use crypto::ratchet_session::{DoubleRatchetSession, SessionError};
 use crypto::session;
@@ -503,4 +504,35 @@ pub fn group_decrypt(
         .inner
         .decrypt_as(&member.inner, ciphertext)
         .map_err(WasmError::from)
+}
+
+// ---------------------------------------------------------------------------
+// Safety-number / fingerprint derivation
+// ---------------------------------------------------------------------------
+
+/// Derive a human-readable safety number (fingerprint) from two parties'
+/// serialized public identity key bytes.
+///
+/// Each `&[u8]` argument must be a 33-byte serialized `IdentityKey` (one key-type
+/// tag byte followed by 32 key bytes), as returned by
+/// [`IdentityHandle::public_bytes`]. The returned string is the display-formatted
+/// safety number that both parties can compare out-of-band to detect
+/// man-in-the-middle or QR-substitution attacks.
+///
+/// The derivation is deterministic: the same two key-pair inputs always produce
+/// the same safety number string. The result is symmetric — swapping the two
+/// arguments yields the same value.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "SafetyNumber"` if either key slice is
+/// malformed or has the wrong length (not a decodable `IdentityKey`). Never
+/// panics — all error paths surface as a structured `WasmError`.
+#[wasm_bindgen]
+pub fn derive_safety_number(
+    local_key: &[u8],
+    remote_key: &[u8],
+) -> Result<String, WasmError> {
+    device_qr::safety_number_for_display(local_key, remote_key)
+        .map_err(|e| WasmError::new("SafetyNumber", &e.to_string()))
 }
