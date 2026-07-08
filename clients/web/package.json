@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prepare-wasm": "npx wasm-pack build --target web ../../core/bindings/wasm --out-dir pkg",
+    "prepare-wasm": "npx wasm-pack build --target web ../../core/bindings/wasm --out-dir pkg --out-name index",
     "dev": "npm run prepare-wasm && vite",
     "build": "npm run prepare-wasm && vite build",
     "test": "npm run prepare-wasm && vitest run"
