@@ -100,27 +100,5 @@ export const Conversation: React.FC = () => {
             {status && <p>{status}</p>}
         </div>
     );
-};n(() => gate.set(StoreName.messages, JSON.stringify(messages))).catch(console.error);
-    }, [messages]);
+}
 
-    return (
-        <div style={{display:'flex', flexDirection:'column', height:'100vh'}}>
-            <h2>Conversation</h2>
-            <div style={{flex:1, overflowY:'auto', border:'1px solid #ccc', padding:'0.5rem'}}>
-                {messages.length===0 ? (<p>No messages yet.</p>) : (
-                    messages.map(m=>(
-                        <div key={m.id} style={{marginBottom:'0.5rem', textAlign:m.sentByMe?'right':'left'}}>
-                            <span>{m.body}</span><br/>
-                            <small>{new Date(m.timestamp).toLocaleString()}</small>
-                        </div>
-                    ))
-                )}
-            </div>
-            <div style={{display:'flex', marginTop:'0.5rem'}}>
-                <input type="text" value={input} onChange={e=>setInput(e.target.value)} style={{flex:1}}/>
-                <button onClick={send}>Send</button>
-            </div>
-            <p>{status}</p>
-        </div>
-    );
-};
