@@ -291,7 +291,9 @@ fn write_len_prefixed(buf: &mut Vec<u8>, segment: &[u8]) {
 /// segment slice. Returns `None` if there aren't enough bytes for the length prefix or the
 /// declared segment.
 fn read_len_prefixed<'a>(bytes: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
-    if bytes.len() < *offset + 4 {
+    // Bounds-check the 4-byte length prefix.  `*offset` is guaranteed <= bytes.len()
+    // by the caller's prior checks, so this subtraction cannot underflow.
+    if bytes.len() - *offset < 4 {
         return None;
     }
     let len = u32::from_be_bytes([
@@ -301,7 +303,12 @@ fn read_len_prefixed<'a>(bytes: &'a [u8], offset: &mut usize) -> Option<&'a [u8]
         bytes[*offset + 3],
     ]) as usize;
     *offset += 4;
-    if bytes.len() < *offset + len {
+    // Use checked subtraction to avoid integer overflow on 32-bit targets (wasm32)
+    // where `*offset + len` could wrap if `len` is a malicious u32::MAX.  After the
+    // `+= 4` above, `*offset <= bytes.len()` still holds, so `bytes.len() - *offset`
+    // cannot underflow.
+    let remaining = bytes.len() - *offset;
+    if len > remaining {
         return None;
     }
     let segment = &bytes[*offset..*offset + len];
@@ -793,6 +800,26 @@ mod tests {
         assert!(
             matches!(result, Err(PreKeyError::MalformedKey)),
             "invalid presence flag must be rejected as MalformedKey, got: {result:?}"
+        );
+    }
+
+    /// Regression test for integer-overflow DoS on 32-bit targets (wasm32).
+    ///
+    /// A malicious peer controlling the bundle bytes can set the first length prefix
+    /// to `u32::MAX`.  On a 32-bit `usize` target, `offset + len` would overflow and
+    /// either panic (debug) or wrap (release), bypassing the bounds check.  The
+    /// checked-arithmetic fix must reject this as `Err`, never panic.
+    #[test]
+    fn prekey_bundle_from_bytes_rejects_u32_max_length_prefix() {
+        // Craft a bundle whose first length prefix is 0xFFFFFFFF.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // identity_key len = u32::MAX
+        bytes.extend_from_slice(&[0u8; 8]); // some filler so the buffer isn't empty
+
+        let result = PreKeyBundle::from_bytes(&bytes);
+        assert!(
+            matches!(result, Err(PreKeyError::MalformedKey)),
+            "u32::MAX length prefix must be rejected as MalformedKey, got: {result:?}"
         );
     }
 }

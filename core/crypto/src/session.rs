@@ -331,7 +331,8 @@ fn write_u32_prefixed(buf: &mut Vec<u8>, segment: &[u8]) {
 }
 
 fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32, SignalProtocolError> {
-    if bytes.len() < *offset + 4 {
+    // `*offset` is guaranteed <= bytes.len() by prior checks, so subtraction is safe.
+    if bytes.len() - *offset < 4 {
         return Err(SignalProtocolError::InvalidArgument(
             "truncated: missing 4-byte field".into(),
         ));
@@ -351,7 +352,12 @@ fn read_u32_prefixed<'a>(
     offset: &mut usize,
 ) -> Result<&'a [u8], SignalProtocolError> {
     let len = read_u32(bytes, offset)? as usize;
-    if bytes.len() < *offset + len {
+    // Use checked subtraction to avoid integer overflow on 32-bit targets (wasm32)
+    // where `*offset + len` could wrap if `len` is a malicious u32::MAX.  After
+    // `read_u32` consumed 4 bytes, `*offset <= bytes.len()` still holds, so
+    // `bytes.len() - *offset` cannot underflow.
+    let remaining = bytes.len() - *offset;
+    if len > remaining {
         return Err(SignalProtocolError::InvalidArgument(
             "truncated: declared segment longer than remaining bytes".into(),
         ));
@@ -372,6 +378,28 @@ mod malformed_prekey_tests {
         assert!(
             matches!(result, Err(SessionError::Establishment(_))),
             "tampered signed-prekey signature must surface as Err, got: {result:?}"
+        );
+    }
+
+    /// Regression test for integer-overflow DoS on 32-bit targets (wasm32).
+    ///
+    /// A malicious peer controlling the bundle bytes can set a length prefix to
+    /// `u32::MAX`.  On a 32-bit `usize` target, `offset + len` would overflow and
+    /// either panic (debug) or wrap (release), bypassing the bounds check.  The
+    /// checked-arithmetic fix must reject this as `Err`, never panic.
+    #[test]
+    fn bundle_from_bytes_rejects_u32_max_length_prefix() {
+        // registration_id (4) + device_id (4) = 8 bytes consumed, then the next
+        // field is a u32-prefixed identity_key segment.  Set its length to u32::MAX.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0u8; 8]); // registration_id + device_id (both 0)
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // identity_key len = u32::MAX
+        bytes.extend_from_slice(&[0u8; 8]); // filler
+
+        let result = super::bundle_from_bytes(&bytes);
+        assert!(
+            result.is_err(),
+            "u32::MAX length prefix must be rejected as Err"
         );
     }
 }
