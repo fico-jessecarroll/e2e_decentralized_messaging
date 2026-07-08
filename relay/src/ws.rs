@@ -607,6 +607,300 @@ pub async fn start_ws_listener_for_test(rate_limit_per_minute: u32) -> WsListene
     WsListenerHandle { addr, _join: join }
 }
 
+// ── Browser-side client ──────────────────────────────────────────────────────
+//
+// `WsRelayClient` is the browser-facing client that talks to the WS listener.
+// It is a reference implementation: the WASM binding layer (`core/bindings/wasm`)
+// can wrap the same logic. The key security property is **fail closed**: if the
+// relay connection is unavailable at send time, the client returns an `Err`
+// rather than silently dropping the message.
+
+/// Errors returned by [`WsRelayClient`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsClientError {
+    /// The relay connection could not be established or was lost. The client
+    /// **fails closed** — the caller must handle this and never silently drop
+    /// the message.
+    ConnectionUnavailable,
+    /// The relay returned an error response.
+    Relay(String),
+    /// A PoW challenge could not be solved (e.g. difficulty too high).
+    PowFailed(String),
+    /// Base64 decode failure on a relay response.
+    Decode(String),
+    /// The requested prekey bundle or envelope was not found.
+    NotFound,
+}
+
+impl std::fmt::Display for WsClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WsClientError::ConnectionUnavailable => {
+                write!(f, "relay connection unavailable — message not sent (fail closed)")
+            }
+            WsClientError::Relay(msg) => write!(f, "relay error: {msg}"),
+            WsClientError::PowFailed(msg) => write!(f, "PoW solve failed: {msg}"),
+            WsClientError::Decode(msg) => write!(f, "decode error: {msg}"),
+            WsClientError::NotFound => write!(f, "not found"),
+        }
+    }
+}
+
+impl std::error::Error for WsClientError {}
+
+/// A client for the WebSocket relay bridge.
+///
+/// This is the browser-side counterpart to `run_ws_listener`. It connects to
+/// the relay, requests PoW challenges, solves them, and performs
+/// publish/lookup/send/pickup operations. **Fail closed**: if the connection
+/// is unavailable at send time, operations return `Err(ConnectionUnavailable)`
+/// rather than silently dropping the message.
+pub struct WsRelayClient {
+    stream: Option<
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    >,
+}
+
+impl WsRelayClient {
+    /// Connect to a relay at the given WebSocket URL.
+    ///
+    /// Returns `Err(ConnectionUnavailable)` if the connection fails — the
+    /// caller must handle this and never silently drop the message.
+    pub async fn connect(addr: SocketAddr) -> Result<Self, WsClientError> {
+        let url = format!("ws://{addr}");
+        match tokio_tungstenite::connect_async(url).await {
+            Ok((stream, _)) => Ok(Self { stream: Some(stream) }),
+            Err(_) => Err(WsClientError::ConnectionUnavailable),
+        }
+    }
+
+    /// Ensure the stream is available; return a mutable reference or fail closed.
+    fn stream_mut(
+        &mut self,
+    ) -> Result<
+        &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        WsClientError,
+    > {
+        self.stream
+            .as_mut()
+            .ok_or(WsClientError::ConnectionUnavailable)
+    }
+
+    /// Send a JSON request and return the JSON response.
+    async fn round_trip(&mut self, req: serde_json::Value) -> Result<serde_json::Value, WsClientError> {
+        let stream = self.stream_mut()?;
+        stream
+            .send(Message::Text(req.to_string().into()))
+            .await
+            .map_err(|_| WsClientError::ConnectionUnavailable)?;
+        loop {
+            match stream.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    return serde_json::from_str(&text).map_err(|e| {
+                        WsClientError::Relay(format!("invalid JSON response: {e}"))
+                    });
+                }
+                Some(Ok(_)) => continue,
+                Some(Err(_)) => return Err(WsClientError::ConnectionUnavailable),
+                None => {
+                    // Stream closed — mark it as unavailable and fail closed.
+                    self.stream = None;
+                    return Err(WsClientError::ConnectionUnavailable);
+                }
+            }
+        }
+    }
+
+    /// Request a PoW challenge, solve it, and return `(challenge_id, pow_solution)`.
+    async fn solve_challenge(
+        &mut self,
+        recipient_id: &str,
+    ) -> Result<(String, String), WsClientError> {
+        let req = serde_json::json!({
+            "op": "challenge",
+            "recipient_id": recipient_id,
+        });
+        let resp = self.round_trip(req).await?;
+        if resp["ok"] != true {
+            return Err(WsClientError::Relay(
+                resp["error"]
+                    .as_str()
+                    .unwrap_or("unknown error")
+                    .to_string(),
+            ));
+        }
+        let challenge_b64 = resp["challenge"]
+            .as_str()
+            .ok_or_else(|| WsClientError::Relay("missing challenge field".into()))?;
+        let challenge_id = resp["challenge_id"]
+            .as_str()
+            .ok_or_else(|| WsClientError::Relay("missing challenge_id field".into()))?
+            .to_string();
+
+        let challenge_wire = b64_decode(challenge_b64)
+            .map_err(|e| WsClientError::Decode(format!("challenge wire: {e}")))?;
+
+        // Wire format: context_len(2 BE) || context || nonce(16) || difficulty(4 BE)
+        let context_len =
+            u16::from_be_bytes([challenge_wire[0], challenge_wire[1]]) as usize;
+        let nonce = &challenge_wire[2 + context_len..2 + context_len + 16];
+        let difficulty = u32::from_be_bytes([
+            challenge_wire[2 + context_len + 16],
+            challenge_wire[2 + context_len + 16 + 1],
+            challenge_wire[2 + context_len + 16 + 2],
+            challenge_wire[2 + context_len + 16 + 3],
+        ]);
+
+        let mut preimage = Vec::new();
+        preimage.extend_from_slice(&challenge_wire[2..2 + context_len]);
+        preimage.extend_from_slice(nonce);
+
+        // Brute-force the solution
+        let mut counter: u64 = 0;
+        let solution = loop {
+            let suffix = counter.to_le_bytes();
+            if check_pow_difficulty(&preimage, &suffix, difficulty) {
+                break suffix.to_vec();
+            }
+            counter += 1;
+            if counter > (1u64 << 32) {
+                return Err(WsClientError::PowFailed(
+                    "exceeded iteration limit".into(),
+                ));
+            }
+        };
+
+        Ok((challenge_id, b64_encode(&solution)))
+    }
+
+    /// Publish a prekey bundle for the given recipient.
+    pub async fn publish_prekey(
+        &mut self,
+        recipient_id: &str,
+        bundle: &[u8],
+    ) -> Result<(), WsClientError> {
+        let (challenge_id, pow_solution) = self.solve_challenge(recipient_id).await?;
+        let req = serde_json::json!({
+            "op": "publish_prekey",
+            "recipient_id": recipient_id,
+            "bundle": b64_encode(bundle),
+            "challenge_id": challenge_id,
+            "pow_solution": pow_solution,
+        });
+        let resp = self.round_trip(req).await?;
+        if resp["ok"] == true {
+            Ok(())
+        } else {
+            Err(WsClientError::Relay(
+                resp["error"].as_str().unwrap_or("unknown error").to_string(),
+            ))
+        }
+    }
+
+    /// Look up a prekey bundle for the given recipient.
+    pub async fn lookup_prekey(
+        &mut self,
+        recipient_id: &str,
+    ) -> Result<Vec<u8>, WsClientError> {
+        let req = serde_json::json!({
+            "op": "lookup_prekey",
+            "recipient_id": recipient_id,
+        });
+        let resp = self.round_trip(req).await?;
+        if resp["ok"] == true {
+            let bundle_b64 = resp["bundle"]
+                .as_str()
+                .ok_or_else(|| WsClientError::Relay("missing bundle field".into()))?;
+            b64_decode(bundle_b64).map_err(|e| WsClientError::Decode(e))
+        } else {
+            let err = resp["error"].as_str().unwrap_or("unknown error");
+            if err == "NotFound" || err == "Expired" {
+                Err(WsClientError::NotFound)
+            } else {
+                Err(WsClientError::Relay(err.to_string()))
+            }
+        }
+    }
+
+    /// Send a Sealed Sender envelope to the given recipient.
+    pub async fn send_envelope(
+        &mut self,
+        recipient_id: &str,
+        envelope: &[u8],
+    ) -> Result<(), WsClientError> {
+        let (challenge_id, pow_solution) = self.solve_challenge(recipient_id).await?;
+        let req = serde_json::json!({
+            "op": "send_envelope",
+            "recipient_id": recipient_id,
+            "envelope": b64_encode(envelope),
+            "challenge_id": challenge_id,
+            "pow_solution": pow_solution,
+        });
+        let resp = self.round_trip(req).await?;
+        if resp["ok"] == true {
+            Ok(())
+        } else {
+            Err(WsClientError::Relay(
+                resp["error"].as_str().unwrap_or("unknown error").to_string(),
+            ))
+        }
+    }
+
+    /// Pick up a Sealed Sender envelope for the given recipient.
+    pub async fn pickup_envelope(
+        &mut self,
+        recipient_id: &str,
+    ) -> Result<Vec<u8>, WsClientError> {
+        let req = serde_json::json!({
+            "op": "pickup_envelope",
+            "recipient_id": recipient_id,
+        });
+        let resp = self.round_trip(req).await?;
+        if resp["ok"] == true {
+            let envelope_b64 = resp["envelope"]
+                .as_str()
+                .ok_or_else(|| WsClientError::Relay("missing envelope field".into()))?;
+            b64_decode(envelope_b64).map_err(|e| WsClientError::Decode(e))
+        } else {
+            let err = resp["error"].as_str().unwrap_or("unknown error");
+            if err == "NotFound" || err == "Expired" {
+                Err(WsClientError::NotFound)
+            } else {
+                Err(WsClientError::Relay(err.to_string()))
+            }
+        }
+    }
+
+    /// Close the connection explicitly.
+    pub async fn close(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            let _ = stream.close(None).await;
+        }
+    }
+}
+
+/// Check if a PoW solution meets the difficulty (mirrors pow::meets_difficulty).
+fn check_pow_difficulty(preimage: &[u8], suffix: &[u8], difficulty: u32) -> bool {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(preimage);
+    hasher.update(suffix);
+    let digest = hasher.finalize();
+
+    let full_bytes = (difficulty / 8) as usize;
+    if digest.len() < full_bytes || digest[..full_bytes].iter().any(|b| *b != 0) {
+        return false;
+    }
+    let extra_bits = difficulty % 8;
+    if extra_bits == 0 {
+        return true;
+    }
+    let mask = 0xFFu8 << (8 - extra_bits);
+    (digest[full_bytes] & mask) == 0
+}
+
 // Simple hex encoding (avoid pulling in another dependency).
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {

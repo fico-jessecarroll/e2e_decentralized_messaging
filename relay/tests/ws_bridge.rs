@@ -51,14 +51,18 @@ async fn ws_round_trip(
     }
 }
 
-/// Request a PoW challenge, solve it, and return the pow_nonce string (base64 of
-/// "challenge_id:solution").
+/// Request a PoW challenge, solve it, and return `(challenge_id, pow_solution)`.
+///
+/// `challenge_id` is the hex of the challenge nonce (used as the key to look up
+/// the challenge on the server). `pow_solution` is the base64 of the raw solution
+/// bytes that satisfy `SHA-256(context || nonce || solution)` at the required
+/// difficulty.
 async fn solve_challenge(
     stream: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
     recipient_id: &str,
-) -> String {
+) -> (String, String) {
     // 1. Request challenge
     let req = serde_json::json!({
         "op": "challenge",
@@ -67,13 +71,12 @@ async fn solve_challenge(
     let resp = ws_round_trip(stream, req).await;
     assert_eq!(resp["ok"], true, "challenge request must succeed");
     let challenge_b64 = resp["challenge"].as_str().expect("challenge field");
-    let challenge_id = resp["challenge_id"].as_str().expect("challenge_id field");
+    let challenge_id = resp["challenge_id"].as_str().expect("challenge_id field").to_string();
 
     // 2. Decode and solve
     let challenge_wire = ws::b64_decode(challenge_b64).expect("challenge wire decode");
-    // Reconstruct the Challenge from wire bytes: context_len(2) || context || nonce(16) || difficulty(4)
+    // Wire format: context_len(2 BE) || context || nonce(16) || difficulty(4 BE)
     let context_len = u16::from_be_bytes([challenge_wire[0], challenge_wire[1]]) as usize;
-    let _context = &challenge_wire[2..2 + context_len];
     let nonce = &challenge_wire[2 + context_len..2 + context_len + 16];
     let difficulty = u32::from_be_bytes([
         challenge_wire[2 + context_len + 16],
@@ -82,9 +85,9 @@ async fn solve_challenge(
         challenge_wire[2 + context_len + 16 + 3],
     ]);
 
-    // The Challenge struct's nonce is private, so we can't reconstruct it from
-    // wire bytes via the public API. Instead, we solve the PoW directly using
-    // the raw preimage (context || nonce) extracted from the wire bytes.
+    // Solve the PoW directly using the raw preimage (context || nonce) extracted
+    // from the wire bytes. The Challenge struct's fields are private, so we
+    // reconstruct the preimage manually.
     let mut preimage = Vec::new();
     preimage.extend_from_slice(&challenge_wire[2..2 + context_len]);
     preimage.extend_from_slice(nonce);
@@ -102,9 +105,8 @@ async fn solve_challenge(
         }
     };
 
-    // 3. Encode pow_nonce = base64("challenge_id:solution")
-    let pow_plain = format!("{}:{}", challenge_id, String::from_utf8_lossy(&solution));
-    ws::b64_encode(pow_plain.as_bytes())
+    // 3. Return (challenge_id, pow_solution) — pow_solution is base64 of raw solution bytes
+    (challenge_id, ws::b64_encode(&solution))
 }
 
 /// Check if a PoW solution meets the difficulty (mirrors pow::meets_difficulty).
@@ -140,26 +142,28 @@ async fn ws_publish_and_lookup_prekey_bundle() {
     let bundle_b64 = ws::b64_encode(&bundle);
 
     // Solve PoW
-    let pow_nonce = solve_challenge(&mut stream, recipient_id).await;
+    let (challenge_id, pow_solution) = solve_challenge(&mut stream, recipient_id).await;
 
     // Publish
     let req = serde_json::json!({
         "op": "publish_prekey",
         "recipient_id": recipient_id,
         "bundle": bundle_b64,
-        "pow_nonce": pow_nonce,
+        "challenge_id": challenge_id,
+        "pow_solution": pow_solution,
     });
     let resp = ws_round_trip(&mut stream, req).await;
     assert_eq!(resp["ok"], true, "publish_prekey must succeed: {resp}");
 
     // Lookup — need a new connection since pickup removes the bundle
     // Actually, lookup_prekey also removes (pickup semantics). Let's publish again.
-    let pow_nonce2 = solve_challenge(&mut stream, recipient_id).await;
+    let (challenge_id2, pow_solution2) = solve_challenge(&mut stream, recipient_id).await;
     let req = serde_json::json!({
         "op": "publish_prekey",
         "recipient_id": recipient_id,
         "bundle": bundle_b64,
-        "pow_nonce": pow_nonce2,
+        "challenge_id": challenge_id2,
+        "pow_solution": pow_solution2,
     });
     let resp = ws_round_trip(&mut stream, req).await;
     assert_eq!(resp["ok"], true, "second publish must succeed: {resp}");
@@ -187,14 +191,15 @@ async fn ws_send_and_pickup_sealed_sender_envelope() {
     let envelope_b64 = ws::b64_encode(&envelope);
 
     // Solve PoW
-    let pow_nonce = solve_challenge(&mut stream, recipient_id).await;
+    let (challenge_id, pow_solution) = solve_challenge(&mut stream, recipient_id).await;
 
     // Send envelope
     let req = serde_json::json!({
         "op": "send_envelope",
         "recipient_id": recipient_id,
         "envelope": envelope_b64,
-        "pow_nonce": pow_nonce,
+        "challenge_id": challenge_id,
+        "pow_solution": pow_solution,
     });
     let resp = ws_round_trip(&mut stream, req).await;
     assert_eq!(resp["ok"], true, "send_envelope must succeed: {resp}");
@@ -231,16 +236,15 @@ async fn ws_rejects_publish_prekey_with_bogus_pow() {
     let resp = ws_round_trip(&mut stream, req).await;
     let challenge_id = resp["challenge_id"].as_str().expect("challenge_id");
 
-    // Bogus solution: all 0xFF
-    let bogus_solution = vec![0xFFu8; 8];
-    let pow_plain = format!("{}:{}", challenge_id, String::from_utf8_lossy(&bogus_solution));
-    let pow_nonce = ws::b64_encode(pow_plain.as_bytes());
+    // Bogus solution: all 0xFF — will never satisfy 20-bit difficulty
+    let bogus_solution = ws::b64_encode(&[0xFFu8; 8]);
 
     let req = serde_json::json!({
         "op": "publish_prekey",
         "recipient_id": recipient_id,
         "bundle": bundle_b64,
-        "pow_nonce": pow_nonce,
+        "challenge_id": challenge_id,
+        "pow_solution": bogus_solution,
     });
     let resp = ws_round_trip(&mut stream, req).await;
     assert_eq!(resp["ok"], false, "bogus PoW must be rejected");
@@ -260,20 +264,22 @@ async fn ws_rejects_send_envelope_with_missing_pow() {
     let envelope = vec![0xDDu8; 64];
     let envelope_b64 = ws::b64_encode(&envelope);
 
-    // Submit with a garbage pow_nonce that won't decode to a valid challenge_id:solution
-    let pow_nonce = ws::b64_encode(b"garbage-no-colon");
+    // Submit with a bogus challenge_id (not in the server's challenge set) and a
+    // bogus pow_solution — the server should reject because the challenge is not found.
+    let bogus_challenge_id = "00000000000000000000000000000000";
+    let bogus_solution = ws::b64_encode(b"garbage-solution");
 
     let req = serde_json::json!({
         "op": "send_envelope",
         "recipient_id": recipient_id,
         "envelope": envelope_b64,
-        "pow_nonce": pow_nonce,
+        "challenge_id": bogus_challenge_id,
+        "pow_solution": bogus_solution,
     });
     let resp = ws_round_trip(&mut stream, req).await;
     assert_eq!(resp["ok"], false, "missing/invalid PoW must be rejected");
     assert!(
-        resp["error"].as_str().unwrap_or("").contains("PowFailed")
-            || resp["error"].as_str().unwrap_or("").contains("pow_nonce"),
+        resp["error"].as_str().unwrap_or("").contains("PowFailed"),
         "error must indicate PoW failure, got: {resp}"
     );
 }
@@ -331,6 +337,104 @@ async fn ws_pickup_nonexistent_envelope_returns_not_found() {
         "NotFound",
         "error must be NotFound, got: {resp}"
     );
+}
+
+// ── browser-side client tests ─────────────────────────────────────────────────
+
+/// The WsRelayClient can publish and look up a prekey bundle end-to-end.
+#[tokio::test]
+async fn ws_client_publish_and_lookup_prekey() {
+    let handle = ws::start_ws_listener_for_test(60).await;
+    let mut client = ws::WsRelayClient::connect(handle.addr)
+        .await
+        .expect("client must connect");
+
+    let recipient_id = "alice-client-test";
+    let bundle = vec![0x11u8; 256];
+
+    // Publish
+    client
+        .publish_prekey(recipient_id, &bundle)
+        .await
+        .expect("publish must succeed");
+
+    // Lookup
+    let fetched = client
+        .lookup_prekey(recipient_id)
+        .await
+        .expect("lookup must succeed");
+    assert_eq!(fetched, bundle, "fetched bundle must match published bundle");
+}
+
+/// The WsRelayClient can send and pick up a Sealed Sender envelope end-to-end.
+#[tokio::test]
+async fn ws_client_send_and_pickup_envelope() {
+    let handle = ws::start_ws_listener_for_test(60).await;
+    let mut client = ws::WsRelayClient::connect(handle.addr)
+        .await
+        .expect("client must connect");
+
+    let recipient_id = "bob-client-test";
+    let envelope = vec![0x22u8; 512];
+
+    // Send
+    client
+        .send_envelope(recipient_id, &envelope)
+        .await
+        .expect("send must succeed");
+
+    // Pickup
+    let fetched = client
+        .pickup_envelope(recipient_id)
+        .await
+        .expect("pickup must succeed");
+    assert_eq!(fetched, envelope, "fetched envelope must match sent envelope");
+}
+
+/// The WsRelayClient must fail closed (return Err, not silently drop) when the
+/// relay connection is unavailable at send time.
+#[tokio::test]
+async fn ws_client_fails_closed_when_relay_unavailable() {
+    // Connect to a port that is not listening — connect_async will fail.
+    let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+    let result = ws::WsRelayClient::connect(addr).await;
+
+    // The client must return an error, not Ok — this is the fail-closed property.
+    assert!(
+        result.is_err(),
+        "client must fail closed when relay is unavailable"
+    );
+    match result {
+        Err(ws::WsClientError::ConnectionUnavailable) => { /* expected */ }
+        Err(e) => panic!("expected ConnectionUnavailable, got: {e}"),
+        Ok(_) => panic!("must not succeed when relay is unavailable"),
+    }
+}
+
+/// The WsRelayClient must fail closed when the connection drops mid-session.
+#[tokio::test]
+async fn ws_client_fails_closed_when_connection_drops() {
+    let handle = ws::start_ws_listener_for_test(60).await;
+    let mut client = ws::WsRelayClient::connect(handle.addr)
+        .await
+        .expect("client must connect");
+
+    // Drop the listener — the next operation should fail closed.
+    drop(handle);
+
+    // Give the listener a moment to stop accepting.
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let result = client.send_envelope("dropped-test", &[0x33u8; 64]).await;
+    assert!(
+        result.is_err(),
+        "client must fail closed when connection drops mid-session"
+    );
+    match result {
+        Err(ws::WsClientError::ConnectionUnavailable) => { /* expected */ }
+        Err(e) => panic!("expected ConnectionUnavailable, got: {e}"),
+        Ok(_) => panic!("must not succeed when connection has dropped"),
+    }
 }
 
 /// Relay must reject binary frames (text-only JSON protocol).
