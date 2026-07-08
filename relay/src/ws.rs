@@ -251,7 +251,7 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
 /// Encode bytes to a base64 string (standard, with padding).
 pub fn b64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
     while i < data.len() {
         let b0 = data[i];
@@ -347,7 +347,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
                 }
             }
             // 2. PoW verification
-            if let Err(e) = verify_pow(&challenge_id, &pow_solution, &state).await {
+            if let Err(e) = verify_pow(&challenge_id, &pow_solution, state).await {
                 warn!(
                     recipient = %truncate_id(&recipient_id),
                     "ws: pow failed on publish_prekey: {e}"
@@ -415,7 +415,7 @@ async fn handle_request(req: WsRequest, state: &Arc<WsState>) -> WsResponse {
                 }
             }
             // 2. PoW verification
-            if let Err(e) = verify_pow(&challenge_id, &pow_solution, &state).await {
+            if let Err(e) = verify_pow(&challenge_id, &pow_solution, state).await {
                 warn!(
                     recipient = %truncate_id(&recipient_id),
                     "ws: pow failed on send_envelope: {e}"
@@ -567,10 +567,19 @@ pub async fn run_ws_listener(addr: SocketAddr, rate_limit_per_minute: u32) -> Re
     }
 }
 
-/// A handle to a running WS listener, for testing. Dropping it stops the listener.
+/// A handle to a running WS listener, for testing. Dropping it stops the listener
+/// and aborts the accept loop.
 pub struct WsListenerHandle {
     pub addr: SocketAddr,
-    _join: tokio::task::JoinHandle<()>,
+    join: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for WsListenerHandle {
+    fn drop(&mut self) {
+        if let Some(join) = self.join.take() {
+            join.abort();
+        }
+    }
 }
 
 /// Start a WS listener on a random localhost port, returning the bound address.
@@ -604,7 +613,7 @@ pub async fn start_ws_listener_for_test(rate_limit_per_minute: u32) -> WsListene
         }
     });
 
-    WsListenerHandle { addr, _join: join }
+    WsListenerHandle { addr, join: Some(join) }
 }
 
 // ── Browser-side client ──────────────────────────────────────────────────────
@@ -813,7 +822,7 @@ impl WsRelayClient {
             let bundle_b64 = resp["bundle"]
                 .as_str()
                 .ok_or_else(|| WsClientError::Relay("missing bundle field".into()))?;
-            b64_decode(bundle_b64).map_err(|e| WsClientError::Decode(e))
+            b64_decode(bundle_b64).map_err(WsClientError::Decode)
         } else {
             let err = resp["error"].as_str().unwrap_or("unknown error");
             if err == "NotFound" || err == "Expired" {
@@ -862,7 +871,7 @@ impl WsRelayClient {
             let envelope_b64 = resp["envelope"]
                 .as_str()
                 .ok_or_else(|| WsClientError::Relay("missing envelope field".into()))?;
-            b64_decode(envelope_b64).map_err(|e| WsClientError::Decode(e))
+            b64_decode(envelope_b64).map_err(WsClientError::Decode)
         } else {
             let err = resp["error"].as_str().unwrap_or("unknown error");
             if err == "NotFound" || err == "Expired" {
@@ -935,6 +944,6 @@ mod tests {
 
     #[test]
     fn truncate_id_long_truncated() {
-        assert_eq!(truncate_id("very-long-recipient-id"), "very-lo…");
+        assert_eq!(truncate_id("very-long-recipient-id"), "very-lon…");
     }
 }

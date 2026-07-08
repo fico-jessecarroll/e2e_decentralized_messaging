@@ -412,19 +412,40 @@ async fn ws_client_fails_closed_when_relay_unavailable() {
 }
 
 /// The WsRelayClient must fail closed when the connection drops mid-session.
+///
+/// We simulate this by starting a minimal TCP server that completes the WebSocket
+/// handshake, then immediately closes the connection. The client's next operation
+/// must return `Err(ConnectionUnavailable)` — never silently drop the message.
 #[tokio::test]
 async fn ws_client_fails_closed_when_connection_drops() {
-    let handle = ws::start_ws_listener_for_test(60).await;
-    let mut client = ws::WsRelayClient::connect(handle.addr)
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async;
+
+    // Start a server that accepts one connection, completes the WS handshake,
+    // then immediately drops the stream — simulating a relay that crashes mid-session.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server_join = tokio::spawn(async move {
+        let (tcp_stream, _) = listener.accept().await.unwrap();
+        // Complete the WS handshake so the client thinks it's connected...
+        let ws_stream = accept_async(tcp_stream).await.unwrap();
+        // ...then immediately drop the stream, closing the connection.
+        drop(ws_stream);
+    });
+
+    // Give the server a moment to be ready.
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+
+    let mut client = ws::WsRelayClient::connect(addr)
         .await
-        .expect("client must connect");
+        .expect("client must connect before the drop");
 
-    // Drop the listener — the next operation should fail closed.
-    drop(handle);
-
-    // Give the listener a moment to stop accepting.
+    // Wait for the server to close the connection.
+    let _ = server_join.await;
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
+    // The next operation must fail closed — return an error, not silently drop.
     let result = client.send_envelope("dropped-test", &[0x33u8; 64]).await;
     assert!(
         result.is_err(),
