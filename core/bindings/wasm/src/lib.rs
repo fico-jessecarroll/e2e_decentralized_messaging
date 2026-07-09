@@ -574,6 +574,5 @@ pub fn encode_device_qr(identity_public_key_bytes: &[u8]) -> Result<String, Wasm
 /// boundary: any malformed or tampered payload is rejected.
 #[wasm_bindgen]
 pub fn decode_device_qr(qr_payload: &str) -> Result<Vec<u8>, WasmError> {
-    device_qr::decode_device_qr(qr_payload)
-        .map_err(|e| WasmError::new("QrDecode", &e.to_string()))
+    device_qr::decode_device_qr(qr_payload).map_err(|e| WasmError::new("QrDecode", &e.to_string()))
 }
