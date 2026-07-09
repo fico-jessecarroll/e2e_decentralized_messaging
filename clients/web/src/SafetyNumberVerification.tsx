@@ -26,7 +26,7 @@ export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({
       .then(() => {
         if (cancelled) return;
         try {
-          const sn = wasm.derive_safety_number(localIdentityKey, remoteIdentityKey);
+          const sn = derive_safety_number(localIdentityKey, remoteIdentityKey);
           setSafetyNumber(sn);
         } catch (e: any) {
           console.error('Failed to derive safety number', e);
