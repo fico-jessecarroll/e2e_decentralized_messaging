@@ -44,8 +44,8 @@ export default function App() {
         ensureWasmInit().then(() => {
             if (cancelled) return;
             setKeys({
-                local: wasm.generate_identity().public_bytes(),
-                remote: wasm.generate_identity().public_bytes(),
+                local: generate_identity().public_bytes(),
+                remote: generate_identity().public_bytes(),
             });
         });
         return () => {
