@@ -79,6 +79,9 @@ export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({ localIde
       )}
     </div>
   );
+}; )}
+    </div>
+  );
 };moteKeyBase64: currentRemoteBase64 };
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }, [verified, safetyNumber, remoteIdentityKey]);
