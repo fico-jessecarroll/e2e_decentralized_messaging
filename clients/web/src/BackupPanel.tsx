@@ -25,6 +25,7 @@ import {
     BackupError,
     BackupErrorKind,
 } from './backup';
+import './BackupPanel.css';
 
 /**
  * Collect all key→value pairs from the `kv` store as serialized records.
@@ -217,9 +218,8 @@ export const BackupPanel: React.FC<BackupPanelProps> = ({ storagePassword }) => 
     };
 
     return (
-        <div style={{ padding: '1rem', borderTop: '1px solid #ccc' }}>
-            <h3>Encrypted Backup</h3>
-            <div style={{ marginBottom: '0.5rem' }}>
+        <div className="backup-panel">
+            <div className="backup-field">
                 <label>
                     Backup passphrase:{' '}
                     <input
@@ -232,7 +232,7 @@ export const BackupPanel: React.FC<BackupPanelProps> = ({ storagePassword }) => 
                     />
                 </label>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <div className="backup-actions">
                 <button onClick={handleExport} disabled={busy}>
                     Export Backup
                 </button>
@@ -242,12 +242,13 @@ export const BackupPanel: React.FC<BackupPanelProps> = ({ storagePassword }) => 
                     accept=".ecb,application/octet-stream"
                     disabled={busy}
                     aria-label="Backup file"
+                    className="backup-file-input"
                 />
                 <button onClick={handleImport} disabled={busy}>
                     Import Backup
                 </button>
             </div>
-            {status && <p style={{ marginTop: '0.5rem' }}>{status}</p>}
+            {status && <p className="backup-status">{status}</p>}
         </div>
     );
 };

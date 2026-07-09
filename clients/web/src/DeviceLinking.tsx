@@ -43,6 +43,8 @@ import {
     initialLinkingState,
     type LinkingState,
 } from './device_linking';
+import { SealGlyph } from './design/SealGlyph';
+import './DeviceLinking.css';
 
 // ---------------------------------------------------------------------------
 // Dependency-free QR matrix generator
@@ -381,86 +383,94 @@ export const DeviceLinking: React.FC<DeviceLinkingProps> = ({ localIdentityKey }
     };
 
     if (!wasmReady) {
-        return <div>Loading device-linking…</div>;
+        return <div className="link-loading">Loading device-linking…</div>;
     }
 
     return (
-        <div className="device-linking" style={{ border: '1px solid #ccc', padding: '1rem', margin: '1rem 0' }}>
-            <h3>Device Linking</h3>
-
+        <div className="device-linking link-view">
             {state.error && state.phase !== 'aborted' && (
-                <div role="alert" style={{ color: 'red' }}>
+                <div role="alert" className="link-error">
                     {state.error}
                 </div>
             )}
 
             {mode === null && state.phase === 'idle' && (
-                <div>
-                    <p>Link a new device to this account.</p>
-                    <button onClick={handleDisplay}>Show QR code (this device)</button>
-                    <button onClick={() => setMode('scan')}>Enter linking code (from other device)</button>
+                <div className="link-choices">
+                    <p className="link-intro-text">Link a new device to this account.</p>
+                    <button className="link-choice-button" onClick={handleDisplay}>Show QR code (this device)</button>
+                    <button className="link-choice-button" onClick={() => setMode('scan')}>Enter linking code (from other device)</button>
                 </div>
             )}
 
             {mode === 'display' && state.phase === 'displaying' && state.qrPayload && (
-                <div>
-                    <p>Scan this QR code on your new device:</p>
-                    <QrCodeSvg payload={state.qrPayload} />
-                    <details>
+                <div className="link-choices">
+                    <p className="link-intro-text">Scan this QR code on your new device:</p>
+                    <div className="link-qr-plate">
+                        <QrCodeSvg payload={state.qrPayload} />
+                    </div>
+                    <details className="link-code-details">
                         <summary>Or enter this code manually</summary>
                         <code>{state.qrPayload}</code>
                     </details>
-                    <button onClick={handleAbort}>Cancel</button>
+                    <div className="link-actions">
+                        <button className="link-button-secondary" onClick={handleAbort}>Cancel</button>
+                    </div>
                 </div>
             )}
 
             {mode === 'scan' && state.phase === 'idle' && (
-                <div>
-                    <p>Enter the linking code shown on the other device:</p>
+                <div className="link-choices">
+                    <p className="link-intro-text">Enter the linking code shown on the other device:</p>
                     <input
+                        className="link-input"
                         type="text"
                         value={scanInput}
                         onChange={(e) => setScanInput(e.target.value)}
                         placeholder="e.g. 05a1b2c3..."
                         aria-label="Linking code input"
-                        style={{ width: '300px' }}
                     />
-                    <button onClick={handleScan}>Continue</button>
-                    <button onClick={handleAbort}>Cancel</button>
+                    <div className="link-actions">
+                        <button className="link-button-primary" onClick={handleScan}>Continue</button>
+                        <button className="link-button-secondary" onClick={handleAbort}>Cancel</button>
+                    </div>
                 </div>
             )}
 
             {state.phase === 'confirming' && state.safetyNumber && (
-                <div>
-                    <p>Verify the safety number matches on both devices:</p>
-                    <p data-testid="displayed-safety-number" style={{ fontFamily: 'monospace', fontSize: '1.2rem' }}>
+                <div className="link-confirm-panel">
+                    <p className="link-intro-text">Verify the safety number matches on both devices:</p>
+                    <SealGlyph value={state.safetyNumber} size={72} tone="neutral" title="Safety number seal for this link" />
+                    <p data-testid="displayed-safety-number" className="link-safety-number">
                         {state.safetyNumber}
                     </p>
-                    <p>Enter the safety number you see on the other device:</p>
+                    <p className="link-intro-text">Enter the safety number you see on the other device:</p>
                     <input
+                        className="link-input"
                         type="text"
                         value={confirmInput}
                         onChange={(e) => setConfirmInput(e.target.value)}
                         placeholder="Enter safety number"
                         aria-label="Safety number confirmation input"
-                        style={{ width: '300px' }}
                     />
-                    <button onClick={handleConfirm}>Confirm and Link</button>
-                    <button onClick={handleAbort}>Abort</button>
+                    <div className="link-actions">
+                        <button className="link-button-primary" onClick={handleConfirm}>Confirm and Link</button>
+                        <button className="link-button-secondary" onClick={handleAbort}>Abort</button>
+                    </div>
                 </div>
             )}
 
             {state.phase === 'linked' && (
-                <div>
+                <div className="link-success">
+                    <SealGlyph value={localIdentityKey.join(',')} size={56} tone="verified" title="Device linked" />
                     <p role="status">Device linked successfully!</p>
-                    <button onClick={handleAbort}>Link another device</button>
+                    <button className="link-button-primary" onClick={handleAbort}>Link another device</button>
                 </div>
             )}
 
             {state.phase === 'aborted' && (
-                <div>
-                    <p role="alert">Linking aborted: {state.error}</p>
-                    <button onClick={handleAbort}>Start over</button>
+                <div className="link-choices">
+                    <p role="alert" className="link-error">Linking aborted: {state.error}</p>
+                    <button className="link-button-secondary" onClick={handleAbort}>Start over</button>
                 </div>
             )}
         </div>

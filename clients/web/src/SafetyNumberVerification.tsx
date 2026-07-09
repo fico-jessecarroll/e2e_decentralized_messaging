@@ -3,6 +3,8 @@ import { derive_safety_number } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 import { StorageGate, StoreName } from './storage';
 import { getStorageKey } from './storage_key';
+import { SealGlyph } from './design/SealGlyph';
+import './SafetyNumberVerification.css';
 
 export interface SafetyNumberProps {
   localIdentityKey: Uint8Array;
@@ -136,20 +138,29 @@ export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({
   };
 
   return (
-    <div>
-      {error && <p className="text-red-500">{error}</p>}
-      {warning && <p className="text-yellow-500" role="alert">{warning}</p>}
+    <div className="trust-card">
+      {error && <p className="trust-error">{error}</p>}
+      {warning && <p className="trust-warning" role="alert">{warning}</p>}
+      {safetyNumber && (
+        <SealGlyph
+          className="trust-seal"
+          value={safetyNumber}
+          size={72}
+          tone={verified ? 'verified' : warning ? 'alert' : 'neutral'}
+          title={verified ? 'Verified safety number seal' : 'Safety number seal, not yet verified'}
+        />
+      )}
       {safetyNumber === null ? (
-        <p>Loading safety number...</p>
+        <p className="trust-loading">Loading safety number...</p>
       ) : (
-        <p>Safety Number: {safetyNumber}</p>
+        <p className="trust-number">Safety Number: {safetyNumber}</p>
       )}
       {!verified ? (
-        <button onClick={handleVerify} disabled={safetyNumber === null}>Mark as Verified</button>
+        <button className="trust-button" onClick={handleVerify} disabled={safetyNumber === null}>Mark as Verified</button>
       ) : (
         <>
-          <p className="text-green-500">Verified</p>
-          <button onClick={handleUnverify}>Unverify</button>
+          <p className="trust-status-verified">Verified</p>
+          <button className="trust-button-secondary" onClick={handleUnverify}>Unverify</button>
         </>
       )}
     </div>

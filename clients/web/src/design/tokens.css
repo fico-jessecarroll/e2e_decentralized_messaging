@@ -1,0 +1,69 @@
+/*
+ * Design tokens.
+ *
+ * Color is semantic, not decorative: `--verified`, `--alert`, and `--signal`
+ * each mean one thing (cryptographic confirmation, a fail-closed warning,
+ * an in-flight/interactive state) and are never reused for plain branding.
+ * The base is a cool "ink" black rather than pure black or warm cream —
+ * `--paper` is reserved for the small areas that represent a physical
+ * artifact (a sent message, a printed safety-number card, a seal).
+ */
+:root {
+  /* Ink (surfaces) */
+  --ink-950: #0b0e14;
+  --ink-900: #10141c;
+  --ink-800: #171b24;
+  --ink-700: #1e2330;
+  --ink-600: #2a3040;
+  --ink-500: #3b4356;
+
+  /* Text on ink */
+  --text-primary: #d7dae2;
+  --text-secondary: #949bab;
+  --text-tertiary: #666e80;
+
+  /* Paper (artifact surfaces: sent bubbles, printed cards, seals) */
+  --paper-100: #efe9dc;
+  --paper-200: #e4dcc9;
+  --paper-ink: #2a2318;
+
+  /* Semantic state colors */
+  --verified: #4fb3a0;
+  --verified-strong: #6fd0bd;
+  --verified-tint: rgba(79, 179, 160, 0.14);
+
+  --alert: #d4643a;
+  --alert-strong: #ef8a5c;
+  --alert-tint: rgba(212, 100, 58, 0.14);
+
+  --signal: #7c8cff;
+  --signal-strong: #99a6ff;
+  --signal-tint: rgba(124, 140, 255, 0.14);
+
+  /* Type */
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.875rem;
+
+  /* Space (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Radii — small and consistent, not pill-round, not hairline-square */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-panel: 0 1px 0 rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.28);
+}

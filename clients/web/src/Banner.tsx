@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { threatModelWarning } from './api';
+import './Banner.css';
 
 const STORAGE_KEY = 'reducedThreatModelDismissed';
 
@@ -22,9 +23,10 @@ export default function Banner() {
     };
 
     return (
-        <div style={{ backgroundColor: '#ffdddd', padding: '1rem' }} data-testid="banner">
-            <p>{threatModelWarning()}</p>
-            <button onClick={handleDismiss}>Dismiss</button>
+        <div className="advisory" data-testid="banner">
+            <span className="advisory-mark" aria-hidden="true">ADVISORY</span>
+            <p className="advisory-text">{threatModelWarning()}</p>
+            <button className="advisory-dismiss" onClick={handleDismiss}>Dismiss</button>
         </div>
     );
 }

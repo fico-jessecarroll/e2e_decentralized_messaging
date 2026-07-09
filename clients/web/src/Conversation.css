@@ -1,0 +1,98 @@
+.thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.thread-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.thread-empty {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  margin: auto;
+}
+
+.msg-row {
+  display: flex;
+}
+
+.msg-row.mine {
+  justify-content: flex-end;
+}
+
+.msg-bubble {
+  max-width: 60%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.msg-row:not(.mine) .msg-bubble {
+  background: var(--ink-800);
+  border: 1px solid var(--ink-700);
+  color: var(--text-primary);
+}
+
+/* Sent messages render on "paper" — the artifact-surface color reserved
+   for things the other party will hold as proof: a sent, sealed message. */
+.msg-row.mine .msg-bubble {
+  background: var(--paper-100);
+  color: var(--paper-ink);
+}
+
+.msg-time {
+  display: block;
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  opacity: 0.6;
+}
+
+.composer {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--ink-700);
+  flex-shrink: 0;
+}
+
+.composer-input {
+  flex: 1;
+  background: var(--ink-800);
+  border: 1px solid var(--ink-600);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.composer-input:focus {
+  border-color: var(--signal);
+}
+
+.composer-send {
+  background: var(--signal);
+  color: var(--ink-950);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font-weight: 600;
+}
+
+.composer-send:disabled {
+  background: var(--ink-700);
+  color: var(--text-tertiary);
+}
+
+.thread-status {
+  padding: 0 var(--space-5) var(--space-2);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}

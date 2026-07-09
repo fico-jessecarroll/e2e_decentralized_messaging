@@ -1,0 +1,9 @@
+/* Self-hosted fonts (no external CDN request) — IBM Plex is one engineered
+   type family covering both roles used in this UI: Sans for prose, Mono for
+   everything that is literally data (keys, safety numbers, hex payloads). */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';

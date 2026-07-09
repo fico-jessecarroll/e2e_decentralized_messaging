@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { generate_identity, derive_safety_number, group_create, group_add_member, group_remove_member, group_encrypt, group_decrypt, IdentityHandle, GroupHandle } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
+import { SealGlyph } from './design/SealGlyph';
+import './GroupConversation.css';
 
 // Sender Keys group crypto UI on top of the WASM group bindings
 // (group_create/group_add_member/group_remove_member/group_encrypt/
@@ -139,27 +141,26 @@ export const GroupConversation: React.FC = () => {
     };
 
     if (error) {
-        return <div role="alert">Group conversation unavailable: {error}</div>;
+        return <div role="alert" className="group-error">Group conversation unavailable: {error}</div>;
     }
 
     if (!ready) {
-        return <div>Loading…</div>;
+        return <div className="group-loading">Loading…</div>;
     }
 
     return (
-        <div data-testid="group-conversation">
-            <h2>Group Conversation</h2>
+        <div data-testid="group-conversation" className="group-view">
             {!group ? (
-                <button onClick={createGroup} data-testid="create-group-button">
+                <button onClick={createGroup} data-testid="create-group-button" className="group-create group-create-button">
                     Create Group
                 </button>
             ) : (
                 <>
-                    <div data-testid="member-list">
-                        <h3>Members</h3>
+                    <div data-testid="member-list" className="group-members">
                         {allMembers.map((m) => (
-                            <div key={m.name}>
-                                {m.name}{' '}
+                            <div key={m.name} className={`member-chip${memberNames.includes(m.name) ? ' in-group' : ''}`}>
+                                <SealGlyph value={m.name} size={20} tone={memberNames.includes(m.name) ? 'verified' : 'neutral'} title={`${m.name}'s seal`} />
+                                <span className="member-chip-name">{m.name}</span>
                                 {memberNames.includes(m.name) ? (
                                     <button onClick={() => removeMember(m.name)} data-testid={`remove-${m.name}`}>
                                         Remove
@@ -172,16 +173,20 @@ export const GroupConversation: React.FC = () => {
                             </div>
                         ))}
                     </div>
-                    <div data-testid="group-message-list">
+                    <div data-testid="group-message-list" className="group-log">
                         {messages.length === 0 ? (
-                            <p>No messages yet.</p>
+                            <p className="group-empty">No messages yet.</p>
                         ) : (
                             messages.map((msg) => (
-                                <div key={msg.id} data-testid={`message-${msg.id}`}>
-                                    <p>{msg.plaintext}</p>
-                                    <ul>
+                                <div key={msg.id} data-testid={`message-${msg.id}`} className="group-msg">
+                                    <p className="group-msg-text">{msg.plaintext}</p>
+                                    <ul className="group-msg-receipts">
                                         {Object.entries(msg.decryptResults).map(([name, result]) => (
-                                            <li key={name} data-testid={`decrypt-${msg.id}-${name}`}>
+                                            <li
+                                                key={name}
+                                                data-testid={`decrypt-${msg.id}-${name}`}
+                                                className={`receipt ${result.ok ? 'receipt-ok' : 'receipt-fail'}`}
+                                            >
                                                 {name}: {result.ok ? 'decrypted' : `failed (${result.error})`}
                                             </li>
                                         ))}
@@ -190,15 +195,18 @@ export const GroupConversation: React.FC = () => {
                             ))
                         )}
                     </div>
-                    <input
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Type a group message"
-                        data-testid="group-message-input"
-                    />
-                    <button onClick={send} data-testid="group-send-button">
-                        Send
-                    </button>
+                    <div className="group-composer">
+                        <input
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="Type a group message"
+                            data-testid="group-message-input"
+                            className="group-input"
+                        />
+                        <button onClick={send} data-testid="group-send-button" className="group-send">
+                            Send
+                        </button>
+                    </div>
                 </>
             )}
         </div>

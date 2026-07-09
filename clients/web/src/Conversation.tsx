@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StorageGate, StoreName } from './storage';
 import { getStorageKey } from './storage_key';
 import { WebSocketTransport } from './websocket_transport';
+import './Conversation.css';
 
 export interface Message {
     id: string;
@@ -84,30 +85,32 @@ export const Conversation: React.FC = () => {
     };
 
     return (
-        <div style={{display:'flex', flexDirection:'column', height:'100vh'}}>
-            <h2>Conversation</h2>
-            <div style={{flex:1, overflowY:'auto', border:'1px solid #ccc', padding:'0.5rem'}}>
-                {messages.length===0 ? (<p>No messages yet.</p>) : (
+        <div className="thread">
+            <div className="thread-log">
+                {messages.length===0 ? (<p className="thread-empty">No messages yet.</p>) : (
                     messages.map(m => (
-                        <div key={m.id} style={{marginBottom: '0.5rem'}}>
-                            <strong>{m.sentByMe ? 'You' : 'Them'}:</strong> {m.body}
-                            <br/>
-                            <small>{new Date(m.timestamp).toLocaleString()}</small>
+                        <div key={m.id} className={`msg-row${m.sentByMe ? ' mine' : ''}`}>
+                            <div className="msg-bubble">
+                                {m.body}
+                                <small className="msg-time">
+                                    {m.sentByMe ? 'You' : 'Them'} · {new Date(m.timestamp).toLocaleString()}
+                                </small>
+                            </div>
                         </div>
                     ))
                 )}
             </div>
-            <div style={{display:'flex', gap:'0.5rem', padding:'0.5rem'}}>
+            <div className="composer">
                 <input
+                    className="composer-input"
                     type="text"
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     placeholder="Type a message"
-                    style={{flex:1}}
                 />
-                <button onClick={send} disabled={!transportReady}>Send</button>
+                <button className="composer-send" onClick={send} disabled={!transportReady}>Send</button>
             </div>
-            {status && <p>{status}</p>}
+            {status && <p className="thread-status">{status}</p>}
         </div>
     );
 }
