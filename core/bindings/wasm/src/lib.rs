@@ -543,3 +543,37 @@ pub fn derive_safety_number(local_key: &[u8], remote_key: &[u8]) -> Result<Strin
     device_qr::safety_number_for_display(local_key, remote_key)
         .map_err(|e| WasmError::new("SafetyNumber", &e.to_string()))
 }
+
+// ---------------------------------------------------------------------------
+// QR device-linking: encode / decode
+// ---------------------------------------------------------------------------
+
+/// Encode a device's identity public key bytes as a QR code payload string
+/// (hex-encoded key bytes). The returned string is the exact data a QR code
+/// scanner would read when scanning a QR code rendered from this payload.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "QrEncode"` if the bytes cannot be
+/// represented as a valid QR code payload.
+#[wasm_bindgen]
+pub fn encode_device_qr(identity_public_key_bytes: &[u8]) -> Result<String, WasmError> {
+    device_qr::encode_device_qr(identity_public_key_bytes)
+        .map_err(|e| WasmError::new("QrEncode", &e.to_string()))
+}
+
+/// Decode a scanned QR code payload string back to raw identity public key
+/// bytes. The payload must be the hex string returned by
+/// [`encode_device_qr`].
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "QrDecode"` if the payload contains
+/// non-hex characters, has odd length, or does not decode to exactly 33
+/// bytes (the serialized identity key length). This is the fail-closed
+/// boundary: any malformed or tampered payload is rejected.
+#[wasm_bindgen]
+pub fn decode_device_qr(qr_payload: &str) -> Result<Vec<u8>, WasmError> {
+    device_qr::decode_device_qr(qr_payload)
+        .map_err(|e| WasmError::new("QrDecode", &e.to_string()))
+}
