@@ -13,7 +13,7 @@
       // into the gitignored core/bindings/wasm/pkg/) to committed type
       // declarations in src/wasm-bindings.d.ts.  This lets `tsc --noEmit`
       // resolve types on a fresh checkout that has not yet built the WASM.
-      "wasm-bindings": ["./src/wasm-bindings.d.ts"]
+      "../../../core/bindings/wasm/pkg/index.js": ["./src/wasm-bindings.d.ts"]
     }
   },
   "include": ["src", "tests"]
