@@ -138,13 +138,13 @@ export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({
     <div>
       {error && <p className="text-red-500">{error}</p>}
       {warning && <p className="text-yellow-500" role="alert">{warning}</p>}
-      {!safetyNumber ? (
+      {safetyNumber === null ? (
         <p>Loading safety number...</p>
       ) : (
         <p>Safety Number: {safetyNumber}</p>
       )}
       {!verified ? (
-        <button onClick={handleVerify} disabled={!safetyNumber}>Mark as Verified</button>
+        <button onClick={handleVerify} disabled={safetyNumber === null}>Mark as Verified</button>
       ) : (
         <>
           <p className="text-green-500">Verified</p>
