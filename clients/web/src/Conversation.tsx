@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { StorageGate, StoreName } from './storage';
+import { getStorageKey } from './storage_key';
 import { WebSocketTransport } from './websocket_transport';
 
 export interface Message {
@@ -24,7 +25,7 @@ export const Conversation: React.FC = () => {
 
     // Load history from storage on mount
     useEffect(() => {
-        const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: new Uint8Array(32) });
+        const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: getStorageKey() });
         gate.open().then(async () => {
             try {
                 // StorageGate.get already returns the parsed value (or null).
@@ -40,7 +41,7 @@ export const Conversation: React.FC = () => {
     // Persist messages whenever they change
     useEffect(() => {
         if (!loadedRef.current) return;
-        const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: new Uint8Array(32) });
+        const gate = new StorageGate({ indexedDB: (globalThis as any).indexedDB, keyBytes: getStorageKey() });
         // StorageGate.put already serializes the value - don't stringify twice.
         gate.open().then(() => gate.put(MESSAGES_STORE, HISTORY_ID, messages)).catch(console.error);
     }, [messages]);

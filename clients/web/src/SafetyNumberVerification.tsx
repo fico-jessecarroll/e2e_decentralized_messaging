@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { derive_safety_number } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 import { StorageGate, StoreName } from './storage';
+import { getStorageKey } from './storage_key';
 
 export interface SafetyNumberProps {
   localIdentityKey: Uint8Array;
@@ -78,7 +79,7 @@ export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({
     setLoaded(false);
     const gate = new StorageGate({
       indexedDB: (globalThis as any).indexedDB,
-      keyBytes: new Uint8Array(32),
+      keyBytes: getStorageKey(),
     });
     const currentRemoteBase64 = toBase64(remoteIdentityKey);
     gate.open()
@@ -114,7 +115,7 @@ export const SafetyNumberVerification: React.FC<SafetyNumberProps> = ({
     if (!loaded || safetyNumber === null) return;
     const gate = new StorageGate({
       indexedDB: (globalThis as any).indexedDB,
-      keyBytes: new Uint8Array(32),
+      keyBytes: getStorageKey(),
     });
     const record: VerifiedRecord = {
       verified,
