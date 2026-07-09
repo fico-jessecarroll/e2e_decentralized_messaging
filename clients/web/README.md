@@ -47,6 +47,47 @@ Runs the Vitest suite (`vitest run`) after regenerating the WASM bindings.
 npm run build
 ```
 
+## Relay WebSocket transport
+
+`src/relay_websocket_transport.ts` implements the relay's real WebSocket wire
+protocol (as documented in `relay/src/ws.rs`):
+
+1. **Challenge** — sends `{"op":"challenge","recipient_id":"..."}` and receives
+   `{"ok":true,"challenge":"<base64>","challenge_id":"<hex>"}`. The `challenge`
+   field is the base64-encoded wire bytes of `pow::Challenge::to_wire()`.
+2. **PoW solve** — the client decodes the challenge wire bytes, then brute-forces
+   an 8-byte little-endian u64 counter so that
+   `SHA-256(context || nonce || solution)` has `difficulty` leading zero bits
+   (20-bit difficulty, context `ws-relay-v1` — matching `relay/src/pow/mod.rs`).
+3. **publish_prekey / send_envelope** — include `challenge_id` (hex) and
+   `pow_solution` (base64 of the 8-byte solution) alongside the base64 payload.
+4. **lookup_prekey / pickup_envelope** — read-only ops, no PoW required.
+
+### Relay URL configuration
+
+The relay URL is **not hardcoded**. It is resolved at runtime by
+`getRelayWsUrl()` with this precedence:
+
+1. `localStorage['relayWsUrl']` (runtime override, highest precedence)
+2. `VITE_RELAY_WS_URL` environment variable (build-time, set in `.env`)
+3. Default: `ws://127.0.0.1:8000`
+
+```sh
+# Build-time override via .env
+echo 'VITE_RELAY_WS_URL=ws://relay.example.com:8000' > .env.local
+npm run build
+```
+
+### Error handling
+
+All relay errors propagate as `RelayError` (a typed `Error` subclass) — they are
+never swallowed. This includes:
+
+- `{ok:false,error:"..."}` responses from any op
+- Malformed/invalid JSON responses (fail closed with a caught error)
+- Connection failures and timeouts (visible error state, not a silent hang)
+- PoW solve failures (out-of-range difficulty, exceeded iteration cap)
+
 React app consuming the shared Rust core via WASM bindings (`core/bindings/wasm`).
 See PLAN.md §5 for the documented reduced threat model on web (no secure enclave).
 

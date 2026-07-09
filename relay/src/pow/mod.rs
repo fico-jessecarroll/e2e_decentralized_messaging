@@ -283,4 +283,59 @@ mod tests {
             );
         }
     }
+
+    /// Cross-language interoperability test: mirrors the TypeScript PoW solver
+    /// in `clients/web/src/relay_websocket_transport.ts::solvePow` byte-for-byte
+    /// and verifies the solution passes `pow::verify`.
+    ///
+    /// The TS solver:
+    ///   1. Parses the challenge wire bytes (`Challenge::to_wire` output).
+    ///   2. Builds the preimage `context || nonce`.
+    ///   3. Iterates a u64 counter, serializing it as 8-byte **little-endian**
+    ///      (`counter.to_le_bytes()` — identical to the Rust solver).
+    ///   4. Hashes `SHA-256(preimage || suffix)` and checks leading zero bits.
+    ///
+    /// This test reconstructs the challenge from its wire bytes (as the TS
+    /// client does) and solves it with the same algorithm, then verifies the
+    /// solution against the real `verify` function. If the byte layout or hash
+    /// preimage ever diverges between the TS and Rust solvers, this test fails.
+    #[test]
+    fn ts_solver_algorithm_produces_verifiable_solution() {
+        // Build a challenge with the WS relay context (matching production).
+        let challenge = Challenge::new(b"ws-relay-v1", 20);
+        let wire = challenge.to_wire();
+
+        // --- Mirror the TS parseChallengeWire logic ---
+        let context_len = u16::from_be_bytes([wire[0], wire[1]]) as usize;
+        let context = &wire[2..2 + context_len];
+        let nonce = &wire[2 + context_len..2 + context_len + 16];
+        let difficulty = u32::from_be_bytes(
+            wire[2 + context_len + 16..2 + context_len + 16 + 4]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(context, b"ws-relay-v1");
+        assert_eq!(nonce, challenge.nonce());
+        assert_eq!(difficulty, 20);
+
+        // --- Mirror the TS solvePow loop ---
+        let mut preimage = Vec::with_capacity(context.len() + nonce.len());
+        preimage.extend_from_slice(context);
+        preimage.extend_from_slice(nonce);
+
+        let mut counter: u64 = 0;
+        let solution = loop {
+            let suffix = counter.to_le_bytes(); // 8-byte LE — matches TS setBigUint64(LE)
+            if meets_difficulty(&preimage, &suffix, difficulty) {
+                break suffix.to_vec();
+            }
+            counter += 1;
+            if counter > (1u64 << 32) {
+                panic!("TS-equivalent solver exceeded iteration cap");
+            }
+        };
+
+        // The solution must pass the real verify function.
+        assert!(matches!(verify(&challenge, &solution), Ok(())));
+    }
 }

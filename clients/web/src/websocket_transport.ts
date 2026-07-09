@@ -1,10 +1,12 @@
+import { getRelayWsUrl } from './relay_websocket_transport';
+
 export class WebSocketTransport {
     private ws: WebSocket | null = null;
     onopen?: () => void;
     onerror?: (e: Event) => void;
     onmessage?: (msg: string) => void;
 
-    constructor(url: string = 'ws://localhost:8000') {
+    constructor(url: string = getRelayWsUrl()) {
         this.ws = new WebSocket(url);
         this.ws.onopen = () => { if (this.onopen) this.onopen(); };
         this.ws.onerror = e => { if (this.onerror) this.onerror(e); };
@@ -13,7 +15,7 @@ export class WebSocketTransport {
 
     static async sendMessage(body: string): Promise<void> {
         // For simplicity, open a temporary connection for each message.
-        const ws = new WebSocket('ws://localhost:8000');
+        const ws = new WebSocket(getRelayWsUrl());
         return new Promise((resolve, reject) => {
             ws.onopen = () => {
                 ws.send(JSON.stringify({ type: 'message', body }));
