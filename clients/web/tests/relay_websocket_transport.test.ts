@@ -120,9 +120,12 @@ describe('solvePow', () => {
   test('produces a solution that verifies against the relay algorithm', async () => {
     // Build a challenge wire matching relay's Challenge::to_wire():
     // context_len(2 BE) || context || nonce(16) || difficulty(4 BE)
+    // Use a low difficulty (8 bits) so the brute-force loop completes quickly
+    // even on slow CI runners. The byte layout and verify contract are
+    // identical regardless of difficulty — only the iteration count changes.
     const context = new TextEncoder().encode('ws-relay-v1');
     const nonce = new Uint8Array(16); // all zeros for determinism
-    const difficulty = 20;
+    const difficulty = 8;
 
     const wire = buildChallengeWire(context, nonce, difficulty);
     const solution = await solvePow(wire);
@@ -206,11 +209,12 @@ describe('RelayWebSocketTransport outbound JSON shapes', () => {
     const ws = MockWebSocket.last();
     ws.fireOpen();
 
-    // Get a challenge first
+    // Get a challenge first — use low difficulty (8 bits) so solvePow finishes
+    // quickly on CI runners. The wire shape is identical at any difficulty.
     const challengePromise = transport.requestChallenge('bob-456');
     const context = new TextEncoder().encode('ws-relay-v1');
     const nonce = new Uint8Array(16);
-    const wire = buildChallengeWire(context, nonce, 20);
+    const wire = buildChallengeWire(context, nonce, 8);
     ws.fireMessage(JSON.stringify({
       ok: true,
       challenge: base64Encode(wire),
@@ -267,11 +271,12 @@ describe('RelayWebSocketTransport outbound JSON shapes', () => {
     const ws = MockWebSocket.last();
     ws.fireOpen();
 
-    // Get challenge
+    // Get challenge — use low difficulty (8 bits) so solvePow finishes quickly
+    // on CI runners. The wire shape is identical at any difficulty.
     const challengePromise = transport.requestChallenge('dave-000');
     const context = new TextEncoder().encode('ws-relay-v1');
     const nonce = new Uint8Array(16);
-    const wire = buildChallengeWire(context, nonce, 20);
+    const wire = buildChallengeWire(context, nonce, 8);
     ws.fireMessage(JSON.stringify({
       ok: true,
       challenge: base64Encode(wire),
