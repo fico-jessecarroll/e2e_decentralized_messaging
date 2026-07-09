@@ -36,4 +36,7 @@ async fn cross_client_smoke_test_simulated() {
         &alice_id.identity_key().serialize(),
     ).expect("safety number");
     assert_eq!(alice_safety, bob_safety);
-}
+    // Tamper ciphertext and expect decryption failure
+    let mut tampered = ciphertext.clone();
+    tampered[0] ^= 0xFF;
+    assert!(bob.decrypt(&tampered).await.is_err());
