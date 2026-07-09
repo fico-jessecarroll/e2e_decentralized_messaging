@@ -9,10 +9,46 @@ The web client consumes the shared Rust core via WASM bindings (`core/bindings/w
 
 These prerequisites are only needed for local development and CI builds; the published NPM package does not contain the generated WASM artifacts.
 
+## Setup
+
+```sh
+npm install
+```
+
+## Build the WASM bindings
+
+`npm run dev`, `npm run build`, and `npm test` all invoke this automatically via a
+`prepare-wasm` pre-step, so you normally don't need to run it by hand:
+
+```sh
+npm run prepare-wasm
+```
+
+This runs `wasm-pack build --target bundler` against `core/bindings/wasm` and writes
+the generated ES-module bindings to `pkg/` (gitignored, regenerated on demand).
+
+## Run the dev server
+
+```sh
+npm run dev
+```
+
+## Run the test suite
+
+```sh
+npm test
+```
+
+Runs the Vitest suite (`vitest run`) after regenerating the WASM bindings.
+
+## Build for production
+
+```sh
+npm run build
+```
 
 React app consuming the shared Rust core via WASM bindings (`core/bindings/wasm`).
-Scaffolded per PLAN.md §6 / Phase 8 — implementation not yet started. See PLAN.md §5 for the
-documented reduced threat model on web (no secure enclave).
+See PLAN.md §5 for the documented reduced threat model on web (no secure enclave).
 
 ## Encrypted storage API
 
