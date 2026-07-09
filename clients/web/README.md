@@ -39,6 +39,25 @@ const val = await gate.get('identity', 'self'); // null if missing, throws on ta
 Store names: `'identity' | 'session' | 'prekey' | 'messages'`. The CryptoKey is
 imported as non-extractable so raw key material cannot be exfiltrated from JS.
 
+### Safety-number verification (`SafetyNumberVerification`)
+
+The `SafetyNumberVerification` component displays the safety number for a
+conversation by calling the WASM `derive_safety_number` binding (real
+derivation from the local and remote identity keys — not a placeholder).
+
+**Persistence.** The verified/unverified state is persisted per
+`conversationId` via `StorageGate` (encrypted IndexedDB, store `'identity'`,
+key `safety-number:<conversationId>`). The stored record includes the remote
+identity key (base64) that was present at the time of verification, so it
+survives a page reload.
+
+**TOFU (Trust On First Use) handling.** On load, if the current remote
+identity key differs from the key stored alongside the last `verified: true`
+record, the verified flag is **cleared** and a visible warning
+(`role="alert"`) is surfaced — the verified state is never silently carried
+forward onto a changed key. The user must explicitly re-verify against the
+new safety number.
+
 ### `BrowserStorage`
 
 A simpler key/value store that derives its AES-256-GCM key from a password via

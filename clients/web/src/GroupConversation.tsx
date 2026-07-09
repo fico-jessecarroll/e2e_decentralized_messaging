@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
+import { generate_identity, derive_safety_number, group_create, group_add_member, group_remove_member, group_encrypt, group_decrypt, IdentityHandle, GroupHandle } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 
 // Sender Keys group crypto UI on top of the WASM group bindings
@@ -38,7 +38,7 @@ export interface GroupMessage {
 
 interface DemoMember {
     name: string;
-    identity: InstanceType<typeof wasm.IdentityHandle>;
+    identity: InstanceType<typeof IdentityHandle>;
     publicBytes: Uint8Array;
 }
 
@@ -47,9 +47,9 @@ const DEMO_MEMBER_NAMES = ['Alice', 'Bob', 'Eve'] as const;
 export const GroupConversation: React.FC = () => {
     const [ready, setReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [selfIdentity, setSelfIdentity] = useState<InstanceType<typeof wasm.IdentityHandle> | null>(null);
+    const [selfIdentity, setSelfIdentity] = useState<InstanceType<typeof IdentityHandle> | null>(null);
     const [allMembers, setAllMembers] = useState<DemoMember[]>([]);
-    const [group, setGroup] = useState<InstanceType<typeof wasm.GroupHandle> | null>(null);
+    const [group, setGroup] = useState<InstanceType<typeof GroupHandle> | null>(null);
     const [memberNames, setMemberNames] = useState<string[]>([]);
     const [messages, setMessages] = useState<GroupMessage[]>([]);
     const [input, setInput] = useState('');
@@ -59,9 +59,9 @@ export const GroupConversation: React.FC = () => {
         ensureWasmInit()
             .then(() => {
                 if (cancelled) return;
-                const self = wasm.generate_identity();
+                const self = generate_identity();
                 const demoMembers: DemoMember[] = DEMO_MEMBER_NAMES.map((name) => {
-                    const identity = wasm.generate_identity();
+                    const identity = generate_identity();
                     return { name, identity, publicBytes: identity.public_bytes() };
                 });
                 setSelfIdentity(self);
@@ -79,7 +79,7 @@ export const GroupConversation: React.FC = () => {
 
     const createGroup = () => {
         if (!selfIdentity) return;
-        setGroup(wasm.group_create(selfIdentity));
+        setGroup(group_create(selfIdentity));
         setMemberNames([]);
         setMessages([]);
     };
@@ -88,7 +88,7 @@ export const GroupConversation: React.FC = () => {
         if (!group || memberNames.includes(name)) return;
         const member = allMembers.find((m) => m.name === name);
         if (!member) return;
-        setGroup(wasm.group_add_member(group, member.publicBytes));
+        setGroup(group_add_member(group, member.publicBytes));
         setMemberNames((prev) => [...prev, name]);
     };
 
@@ -96,7 +96,7 @@ export const GroupConversation: React.FC = () => {
         if (!group) return;
         const member = allMembers.find((m) => m.name === name);
         if (!member) return;
-        setGroup(wasm.group_remove_member(group, member.publicBytes));
+        setGroup(group_remove_member(group, member.publicBytes));
         setMemberNames((prev) => prev.filter((n) => n !== name));
     };
 
@@ -105,7 +105,7 @@ export const GroupConversation: React.FC = () => {
         const plaintextBytes = new TextEncoder().encode(input);
         let ciphertext: Uint8Array;
         try {
-            ciphertext = wasm.group_encrypt(group, selfIdentity, plaintextBytes);
+            ciphertext = group_encrypt(group, selfIdentity, plaintextBytes);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
             return;
@@ -117,7 +117,7 @@ export const GroupConversation: React.FC = () => {
         const decryptResults: Record<string, GroupMessageResult> = {};
         for (const member of allMembers) {
             try {
-                wasm.group_decrypt(group, member.identity, ciphertext);
+                group_decrypt(group, member.identity, ciphertext);
                 decryptResults[member.name] = { ok: true };
             } catch (e) {
                 decryptResults[member.name] = {

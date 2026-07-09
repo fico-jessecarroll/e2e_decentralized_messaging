@@ -5,7 +5,7 @@ import { SafetyNumberVerification } from './SafetyNumberVerification';
 import { BackupPanel } from './BackupPanel';
 import { GroupConversation } from './GroupConversation';
 import { DeviceLinking } from './DeviceLinking';
-import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
+import { generate_identity, derive_safety_number } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 
 // SafetyNumberVerification's deriveSafetyNumber calls the real
@@ -44,8 +44,8 @@ export default function App() {
         ensureWasmInit().then(() => {
             if (cancelled) return;
             setKeys({
-                local: wasm.generate_identity().public_bytes(),
-                remote: wasm.generate_identity().public_bytes(),
+                local: generate_identity().public_bytes(),
+                remote: generate_identity().public_bytes(),
             });
         });
         return () => {
