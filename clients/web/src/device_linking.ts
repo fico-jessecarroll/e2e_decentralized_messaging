@@ -28,6 +28,23 @@ import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 
 /**
+ * Extract a human-readable message from a thrown value. WASM binding errors
+ * are `WasmError` structs (not JS `Error` instances) that expose a `.message()`
+ * method, so we check for that before falling back to `String(e)`.
+ */
+function errorMessage(e: unknown): string {
+    if (e instanceof Error) return e.message;
+    if (e !== null && typeof e === 'object' && 'message' in e) {
+        const msg = (e as { message: unknown }).message;
+        if (typeof msg === 'string') return msg;
+        if (typeof msg === 'function') {
+            try { return String((e as { message: () => string }).message()); } catch { /* fall through */ }
+        }
+    }
+    return String(e);
+}
+
+/**
  * Encode a device's identity public key bytes as a QR code payload string.
  * The returned hex string is what a QR renderer encodes into the image.
  *
