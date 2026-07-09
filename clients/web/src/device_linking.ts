@@ -109,7 +109,7 @@ export function confirmSafetyNumber(
         return {
             confirmed: false,
             safetyNumber: null,
-            error: e instanceof Error ? e.message : String(e),
+            error: errorMessage(e),
         };
     }
 
@@ -170,7 +170,7 @@ export async function beginDisplay(
         return {
             ...state,
             phase: 'aborted',
-            error: e instanceof Error ? e.message : String(e),
+            error: errorMessage(e),
         };
     }
 }
@@ -195,7 +195,7 @@ export async function beginScan(
         return {
             ...state,
             phase: 'aborted',
-            error: e instanceof Error ? e.message : String(e),
+            error: errorMessage(e),
         };
     }
 
@@ -206,7 +206,7 @@ export async function beginScan(
         return {
             ...state,
             phase: 'aborted',
-            error: e instanceof Error ? e.message : String(e),
+            error: errorMessage(e),
         };
     }
 
