@@ -549,8 +549,19 @@ pub async fn run_ws_listener(
     rate_limit_per_minute: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
+    serve_listener(listener, rate_limit_per_minute).await
+}
+
+/// Run the WS accept loop on an already-bound [`TcpListener`].
+///
+/// This is split out from [`run_ws_listener`] so the relay binary can bind the
+/// listener eagerly (surfacing a port-in-use error as a clear startup failure)
+/// and then hand it off to a spawned task.
+pub async fn serve_listener(
+    listener: TcpListener,
+    rate_limit_per_minute: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = Arc::new(WsState::new(rate_limit_per_minute));
-    info!(addr = %addr, "ws relay listener started");
 
     loop {
         let (tcp_stream, peer_addr) = listener.accept().await?;
@@ -737,7 +748,7 @@ impl WsRelayClient {
     }
 
     /// Request a PoW challenge, solve it, and return `(challenge_id, pow_solution)`.
-    async fn solve_challenge(
+    pub async fn solve_challenge(
         &mut self,
         recipient_id: &str,
     ) -> Result<(String, String), WsClientError> {
