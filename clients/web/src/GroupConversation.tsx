@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
+import { generate_identity, derive_safety_number } from './wasm_wrapper';
 import { ensureWasmInit } from './wasm_init';
 
 // Sender Keys group crypto UI on top of the WASM group bindings
