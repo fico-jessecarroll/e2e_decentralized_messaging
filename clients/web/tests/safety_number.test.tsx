@@ -22,17 +22,26 @@ vi.mock('../src/storage', () => {
 
 // Mock the real WASM module directly (never via a stub_wasm/wasm_wrapper
 // indirection — production components import from the real path, so tests
-// must mock that same path).
+// must mock that same path).  The mock mirrors the real binding's contract:
+// derive_safety_number throws on malformed (wrong-length) key bytes, just
+// as the real WASM surfaces a structured WasmError with kind = "SafetyNumber".
 vi.mock('../../../core/bindings/wasm/pkg/index.js', () => ({
   derive_safety_number: (localKey: Uint8Array, remoteKey: Uint8Array) => {
+    // The real binding expects 33-byte compressed Curve25519 keys.
+    // Malformed (e.g. empty or wrong-length) keys surface as a WasmError.
+    if (localKey.length !== 33 || remoteKey.length !== 33) {
+      throw new Error('SafetyNumber: invalid identity key length');
+    }
     const concat = new Uint8Array([...localKey, ...remoteKey]);
     return btoa(String.fromCharCode(...concat));
   },
 }));
 vi.mock('../src/wasm_init', () => ({ ensureWasmInit: vi.fn(() => Promise.resolve()) }));
 
-const localKey = new Uint8Array([1, 2, 3]);
-const remoteKey = new Uint8Array([4, 5, 6]);
+const localKey = new Uint8Array(33);
+localKey.fill(1, 0, 33);
+const remoteKey = new Uint8Array(33);
+remoteKey.fill(2, 0, 33);
 const conversationId = 'conv-123';
 
 // Match the green "Verified" paragraph specifically — the regex /^Verified$/
@@ -122,7 +131,8 @@ test('TOFU violation: changing the remote key clears verified state and shows a 
   );
 
   // Now the remote identity key changes — this is the TOFU violation.
-  const newRemoteKey = new Uint8Array([7, 8, 9]);
+  const newRemoteKey = new Uint8Array(33);
+  newRemoteKey.fill(3, 0, 33);
   rerender(
     <SafetyNumberVerification
       localIdentityKey={localKey}
@@ -144,7 +154,7 @@ test('TOFU violation: changing the remote key clears verified state and shows a 
   ).toBeInTheDocument();
 });
 
-test('handles empty key arrays without crashing (boundary validation)', async () => {
+test('surfaces an error for malformed (wrong-length) key bytes', async () => {
   render(
     <SafetyNumberVerification
       localIdentityKey={new Uint8Array(0)}
@@ -152,9 +162,11 @@ test('handles empty key arrays without crashing (boundary validation)', async ()
       conversationId={conversationId}
     />,
   );
-  // The stub derive_safety_number with empty arrays produces btoa("") = "".
-  // The component should display the safety number without crashing.
+  // The component must surface the error from derive_safety_number, not
+  // silently display a (wrong) safety number or crash.
   await waitFor(() =>
-    expect(screen.getByText(/Safety Number:/)).toBeInTheDocument(),
+    expect(screen.getByText(/invalid identity key length/i)).toBeInTheDocument(),
   );
+  // The safety number must NOT be displayed when derivation failed.
+  expect(screen.queryByText(/Safety Number:/)).not.toBeInTheDocument();
 });
