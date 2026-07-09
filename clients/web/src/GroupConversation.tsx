@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { generate_identity, derive_safety_number, group_create, group_add_member, group_remove_member, group_encrypt, group_decrypt } from './wasm_wrapper';
+import { generate_identity, derive_safety_number, group_create, group_add_member, group_remove_member, group_encrypt, group_decrypt, IdentityHandle, GroupHandle } from './wasm_wrapper';
 import { ensureWasmInit } from './wasm_init';
 
 // Sender Keys group crypto UI on top of the WASM group bindings
