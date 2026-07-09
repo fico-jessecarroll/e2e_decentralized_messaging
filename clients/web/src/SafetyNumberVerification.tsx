@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { derive_safety_number } from './wasm_wrapper';
+import { derive_safety_number } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 import { StorageGate, StoreName } from './storage';
 

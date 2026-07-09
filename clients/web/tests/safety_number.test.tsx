@@ -20,9 +20,10 @@ vi.mock('../src/storage', () => {
   return { StorageGate: MockStorageGate, StoreName: undefined as any };
 });
 
-// Mock the WASM wrapper so derive_safety_number returns a deterministic,
-// input-derived value without needing the real WASM binary.
-vi.mock('../src/wasm_wrapper', () => ({
+// Mock the real WASM module directly (never via a stub_wasm/wasm_wrapper
+// indirection — production components import from the real path, so tests
+// must mock that same path).
+vi.mock('../../../core/bindings/wasm/pkg/index.js', () => ({
   derive_safety_number: (localKey: Uint8Array, remoteKey: Uint8Array) => {
     const concat = new Uint8Array([...localKey, ...remoteKey]);
     return btoa(String.fromCharCode(...concat));
