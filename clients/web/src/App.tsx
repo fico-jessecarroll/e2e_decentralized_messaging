@@ -4,6 +4,7 @@ import { Conversation } from './Conversation';
 import { SafetyNumberVerification } from './SafetyNumberVerification';
 import { BackupPanel } from './BackupPanel';
 import { GroupConversation } from './GroupConversation';
+import { DeviceLinking } from './DeviceLinking';
 import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 
@@ -63,6 +64,11 @@ export default function App() {
             </SafetyNumberErrorBoundary>
             <BackupPanel storagePassword="default" />
             <GroupConversation />
+            <SafetyNumberErrorBoundary>
+                {keys && (
+                    <DeviceLinking localIdentityKey={keys.local} />
+                )}
+            </SafetyNumberErrorBoundary>
         </>
     );
 }
