@@ -4,7 +4,7 @@ import { Conversation } from './Conversation';
 import { SafetyNumberVerification } from './SafetyNumberVerification';
 import { BackupPanel } from './BackupPanel';
 import { GroupConversation } from './GroupConversation';
-import * as wasm from '../../../core/bindings/wasm/pkg/index.js';
+import { generate_identity, derive_safety_number } from './wasm_wrapper';
 import { ensureWasmInit } from './wasm_init';
 
 // SafetyNumberVerification's deriveSafetyNumber calls the real
