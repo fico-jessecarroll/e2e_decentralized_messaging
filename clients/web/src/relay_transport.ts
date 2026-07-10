@@ -9,6 +9,14 @@
 //! The relay URL is configurable: read from a Vite env var (`VITE_RELAY_WS_URL`)
 //! at build time, with a `localStorage` override (`relayWsUrl`) checked at
 //! runtime. The old hardcoded `ws://localhost:8000` is gone.
+//!
+//! SHA-256 for the PoW solver uses `hash-wasm`'s `createSHA256()`, which
+//! returns an `IHasher` whose `init()/update()/digest('binary')` are fully
+//! synchronous after a single `await` — exactly what a synchronous
+//! brute-force loop needs. This is the same vetted WASM dependency already
+//! used in `backup.ts` for Argon2id; we do not reimplement crypto by hand.
+
+import { createSHA256 } from 'hash-wasm';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -63,10 +71,6 @@ function base64ToBytes(b64: string): Uint8Array {
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ── PoW ──────────────────────────────────────────────────────────────────────
@@ -128,7 +132,21 @@ function meetsDifficulty(preimage: Uint8Array, suffix: Uint8Array, difficulty: n
  * Solve the PoW challenge by brute-forcing a u64 little-endian counter suffix.
  * Mirrors `solve` in relay/src/pow/mod.rs: the solution is `counter.to_le_bytes()`.
  */
-export function solvePow(challenge: ParsedChallenge): Uint8Array {
+export async function solvePow(challenge: ParsedChallenge): Promise<Uint8Array> {
+    // Reject unreasonably high difficulty before attempting to solve. The
+    // relay's real difficulty is 20 bits; anything above 32 would freeze the
+    // calling thread for a very long time (the brute-force loop is fully
+    // synchronous). A malicious or misconfigured relay could otherwise DoS
+    // the client tab.
+    if (challenge.difficulty > 32) {
+        throw new RelayError(
+            `PoW difficulty ${challenge.difficulty} exceeds sane maximum of 32`,
+        );
+    }
+
+    // Ensure the synchronous SHA-256 hasher is loaded (one-time WASM init).
+    await initSha256();
+
     // Preimage = context || nonce (matches pow::Challenge::preimage_prefix).
     const preimage = new Uint8Array(challenge.context.length + challenge.nonce.length);
     preimage.set(challenge.context, 0);
@@ -159,94 +177,47 @@ function u64ToLeBytes(value: number): Uint8Array {
     return out;
 }
 
-// ── SHA-256 ──────────────────────────────────────────────────────────────────
+// ── SHA-256 (via hash-wasm) ──────────────────────────────────────────────────
 
 /**
- * Synchronous SHA-256 using Web Crypto's subtle.digest.
- * In the browser and jsdom, `crypto.subtle` is available but async. We use a
- * synchronous fallback via a pure-JS implementation to keep the solver loop
- * simple and synchronous (matching the Rust reference).
+ * Lazily-initialized synchronous SHA-256 hasher from `hash-wasm`.
  *
- * For production use, this could be swapped for an async implementation, but
- * the PoW solve loop is CPU-bound and synchronous in the reference Rust code.
+ * `createSHA256()` returns a Promise<IHasher>; after that single `await`,
+ * `init()/update()/digest('binary')` are fully synchronous — exactly what the
+ * PoW brute-force loop needs. We cache the hasher instance so subsequent
+ * solves reuse it without re-instantiating the WASM module.
+ */
+let hasherPromise: Promise<import('hash-wasm').IHasher> | null = null;
+
+function getHasher(): Promise<import('hash-wasm').IHasher> {
+    if (!hasherPromise) {
+        hasherPromise = createSHA256();
+    }
+    return hasherPromise;
+}
+
+/**
+ * Synchronous SHA-256 digest. Requires the hasher to be pre-loaded via
+ * `await initSha256()` (done once at module load and before each solve).
+ */
+let hasher: import('hash-wasm').IHasher | null = null;
+
+/** Initialize the synchronous SHA-256 hasher. Must be awaited before solvePow. */
+export async function initSha256(): Promise<void> {
+    hasher = await getHasher();
+}
+
+/**
+ * Synchronous SHA-256 of `data`. The hasher must have been initialized via
+ * `await initSha256()` first; throws if not.
  */
 function sha256(data: Uint8Array): Uint8Array {
-    return sha256PureJs(data);
-}
-
-// ── Pure-JS SHA-256 implementation ───────────────────────────────────────────
-
-const SHA256_K = new Uint32Array([
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-    0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-]);
-
-function rotr(x: number, n: number): number {
-    return ((x >>> n) | (x << (32 - n))) >>> 0;
-}
-
-function sha256PureJs(data: Uint8Array): Uint8Array {
-    // Pre-processing: padding
-    const bitLen = data.length * 8;
-    const withPadding = new Uint8Array(data.length + 1 + 8 + 63 & ~63 === 0 ? data.length + 64 : ((data.length + 1 + 8 + 63) & ~63));
-    withPadding.set(data);
-    withPadding[data.length] = 0x80;
-    // Append length as 64-bit big-endian (we only support < 2^32 bytes)
-    const lenView = new DataView(withPadding.buffer);
-    lenView.setUint32(withPadding.length - 4, bitLen >>> 0, false);
-    lenView.setUint32(withPadding.length - 8, 0, false);
-
-    let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
-    let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
-
-    const w = new Uint32Array(64);
-    const chunkView = new DataView(withPadding.buffer);
-
-    for (let offset = 0; offset < withPadding.length; offset += 64) {
-        for (let i = 0; i < 16; i++) {
-            w[i] = chunkView.getUint32(offset + i * 4, false);
-        }
-        for (let i = 16; i < 64; i++) {
-            const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
-            const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
-            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
-        }
-
-        let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
-        for (let i = 0; i < 64; i++) {
-            const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-            const ch = (e & f) ^ (~e & g);
-            const temp1 = (h + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
-            const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
-            const maj = (a & b) ^ (a & c) ^ (b & c);
-            const temp2 = (S0 + maj) >>> 0;
-            h = g; g = f; f = e; e = (d + temp1) >>> 0;
-            d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
-        }
-        h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
-        h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+    if (!hasher) {
+        throw new RelayError('SHA-256 hasher not initialized — call await initSha256() first');
     }
-
-    const result = new Uint8Array(32);
-    const rv = new DataView(result.buffer);
-    rv.setUint32(0, h0, false);
-    rv.setUint32(4, h1, false);
-    rv.setUint32(8, h2, false);
-    rv.setUint32(12, h3, false);
-    rv.setUint32(16, h4, false);
-    rv.setUint32(20, h5, false);
-    rv.setUint32(24, h6, false);
-    rv.setUint32(28, h7, false);
-    return result;
+    hasher.init();
+    hasher.update(data);
+    return hasher.digest('binary');
 }
 
 // ── Transport ────────────────────────────────────────────────────────────────
@@ -263,6 +234,14 @@ interface PendingRequest {
  * Each op sends a JSON text frame and awaits a JSON text-frame response.
  * Failures (connection error, `{ok:false}`, malformed JSON) are surfaced as
  * `RelayError` — never swallowed, never cause an unhandled exception.
+ *
+ * **One-in-flight constraint.** This transport tracks a single pending
+ * request (`this.pending`). Callers must fully `await` each op before issuing
+ * the next on the same instance; issuing two ops concurrently will cause the
+ * second to overwrite `this.pending` and the first caller's promise will
+ * never resolve or reject (it hangs). This is acceptable for the current
+ * sequential usage pattern. If concurrent ops are needed in the future, add
+ * a correlation-ID multiplexer keyed on a request field.
  */
 export class RelayTransport {
     private ws: WebSocket | null = null;
@@ -369,7 +348,7 @@ export class RelayTransport {
         }
         const wire = base64ToBytes(challengeB64);
         const parsed = parseChallengeWire(wire);
-        const solution = solvePow(parsed);
+        const solution = await solvePow(parsed);
         return { challengeId, powSolution: bytesToBase64(solution) };
     }
 

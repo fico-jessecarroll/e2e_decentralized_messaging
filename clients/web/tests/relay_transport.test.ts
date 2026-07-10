@@ -184,12 +184,12 @@ describe('PoW solver', () => {
         expect(parsed.difficulty).toBe(20);
     });
 
-    test('solvePow produces a solution that meets the difficulty', () => {
+    test('solvePow produces a solution that meets the difficulty', async () => {
         const context = new TextEncoder().encode('ws-relay-v1');
         const nonce = new Uint8Array(16).fill(3);
         const wire = makeChallengeWire(context, nonce, 20);
         const parsed = parseChallengeWire(wire);
-        const solution = solvePow(parsed);
+        const solution = await solvePow(parsed);
         // Verify: SHA-256(context || nonce || solution) has 20 leading zero bits.
         const preimage = new Uint8Array(context.length + nonce.length);
         preimage.set(context, 0);
@@ -204,13 +204,24 @@ describe('PoW solver', () => {
         expect(digest[2] & 0xf0).toBe(0);
     });
 
-    test('solvePow solution is 8 bytes (u64 little-endian counter)', () => {
+    test('solvePow solution is 8 bytes (u64 little-endian counter)', async () => {
         const context = new TextEncoder().encode('ws-relay-v1');
         const nonce = new Uint8Array(16).fill(1);
         const wire = makeChallengeWire(context, nonce, 8);
         const parsed = parseChallengeWire(wire);
-        const solution = solvePow(parsed);
+        const solution = await solvePow(parsed);
         expect(solution.length).toBe(8);
+    });
+
+    test('solvePow rejects difficulty above the sane maximum of 32', async () => {
+        const context = new TextEncoder().encode('ws-relay-v1');
+        const nonce = new Uint8Array(16).fill(1);
+        const wire = makeChallengeWire(context, nonce, 33);
+        const parsed = parseChallengeWire(wire);
+        await expect(solvePow(parsed)).rejects.toBeInstanceOf(RelayError);
+        await expect(solvePow(parsed)).rejects.toMatchObject({
+            message: expect.stringContaining('exceeds sane maximum'),
+        });
     });
 });
 

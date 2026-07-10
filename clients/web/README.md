@@ -108,3 +108,32 @@ await storage.setItem('identity', { name: 'Alice' });
 const val = await storage.getItem('identity'); // null if missing, throws on tamper
 await storage.deleteItem('identity');
 ```
+
+## Configuring the relay endpoint
+
+The web client connects to the relay over WebSocket. The relay URL is **not
+hardcoded** — it is resolved at runtime by `getRelayWsUrl()` (in
+`src/relay_transport.ts`), with the following priority (highest first):
+
+1. **`localStorage["relayWsUrl"]`** — runtime override. Set this in the browser
+   console or app code to point at a specific relay, e.g.:
+   ```js
+   localStorage.setItem('relayWsUrl', 'ws://my-relay.example:8000');
+   ```
+   This takes effect immediately for new connections (no reload needed if the
+   transport is re-created).
+
+2. **`VITE_RELAY_WS_URL`** — build-time Vite env var. Set it in `.env` (or
+   `.env.production`) before building:
+   ```sh
+   VITE_RELAY_WS_URL=ws://relay.example.com:8000 npm run build
+   ```
+   The value is baked into the bundle at build time.
+
+3. **`ws://localhost:8000`** — last-resort development fallback, used only when
+   neither of the above is set. This is intentionally a dev default, not a
+   production assumption.
+
+Both `RelayTransport` (the real wire-protocol client) and the legacy
+`websocket_transport.ts` (used by `Conversation.tsx`) resolve the relay URL
+through this same function, so the override applies uniformly.
