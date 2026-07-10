@@ -355,6 +355,9 @@ export class RelayTransport {
     /** Request a challenge (raw op, for testing). */
     async requestChallenge(recipientId: string): Promise<{ challenge: string; challengeId: string }> {
         const resp = await this.roundTrip({ op: 'challenge', recipient_id: recipientId });
+        if (!resp.challenge || !resp.challenge_id) {
+            throw new RelayError('challenge response missing fields');
+        }
         return { challenge: resp.challenge, challengeId: resp.challenge_id };
     }
 

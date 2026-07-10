@@ -449,3 +449,134 @@ describe('error handling', () => {
         transport.close();
     });
 });
+
+// ── parseChallengeWire boundary / malformed-input tests ──────────────────────
+//
+// These exercise the two explicit error branches in parseChallengeWire that
+// parse bytes originating from the relay (untrusted network data). A hostile
+// or misconfigured relay could otherwise DoS the client tab.
+
+describe('parseChallengeWire malformed/truncated wire', () => {
+    test('rejects wire shorter than the minimum header (2 + 16 + 4 = 22 bytes)', () => {
+        // 3 bytes — far below the minimum frame size.
+        const shortWire = new Uint8Array([0x00, 0x01, 0x02]);
+        expect(() => parseChallengeWire(shortWire)).toThrow(RelayError);
+        expect(() => parseChallengeWire(shortWire)).toThrow(/too short/);
+    });
+
+    test('rejects wire that passes the header-size check but is truncated mid-nonce/difficulty', () => {
+        // context_len = 11 (0x000b), so nonce starts at offset 13 and difficulty
+        // at offset 29. Provide 24 bytes — enough to pass the first check
+        // (24 >= 2+16+4 = 22), but not enough for the full nonce(16) +
+        // difficulty(4) after the 11-byte context (needs 2+11+16+4 = 33).
+        // This hits the second length check ("challenge wire truncated").
+        const context = new TextEncoder().encode('ws-relay-v1'); // 11 bytes
+        const truncated = new Uint8Array(24);
+        const dv = new DataView(truncated.buffer);
+        dv.setUint16(0, context.length, false);
+        truncated.set(context, 2);
+        expect(() => parseChallengeWire(truncated)).toThrow(RelayError);
+        expect(() => parseChallengeWire(truncated)).toThrow(/truncated/);
+    });
+
+    test('rejects wire with context_len claiming more bytes than present (truncated)', () => {
+        // context_len = 100 (0x0064) but only 25 bytes total. The 2-byte
+        // prefix passes the first check (25 >= 22), but nonceStart = 102 and
+        // difficultyStart = 118, both beyond the buffer — hits "truncated".
+        const lying = new Uint8Array(25);
+        const dv = new DataView(lying.buffer);
+        dv.setUint16(0, 100, false);
+        expect(() => parseChallengeWire(lying)).toThrow(RelayError);
+        expect(() => parseChallengeWire(lying)).toThrow(/truncated/);
+    });
+});
+
+// ── Response-shape guard tests ──────────────────────────────────────────────
+//
+// These exercise the missing-field guards and the missing-ok branch in
+// handleMessage / the op methods. A relay that sends {ok:true} without the
+// expected payload field, or a frame with no `ok` at all, must fail closed
+// with a typed RelayError rather than returning undefined to the caller.
+
+describe('response-shape guards (missing fields, missing ok)', () => {
+    beforeEach(() => {
+        localStorage.clear();
+        MockWebSocket.CLEAR();
+    });
+
+    test('lookup_prekey with ok:true but missing bundle fails closed', async () => {
+        localStorage.setItem('relayWsUrl', 'ws://test:8000');
+        const transport = new RelayTransport();
+        const lookupPromise = transport.lookupPrekey('kim');
+
+        const ws = await connectAndOpen();
+        await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
+        ws._message(JSON.stringify({ ok: true }));
+
+        await expect(lookupPromise).rejects.toBeInstanceOf(RelayError);
+        await expect(lookupPromise).rejects.toMatchObject({ message: /missing bundle/ });
+        transport.close();
+    });
+
+    test('pickup_envelope with ok:true but missing envelope fails closed', async () => {
+        localStorage.setItem('relayWsUrl', 'ws://test:8000');
+        const transport = new RelayTransport();
+        const pickupPromise = transport.pickupEnvelope('liam');
+
+        const ws = await connectAndOpen();
+        await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
+        ws._message(JSON.stringify({ ok: true }));
+
+        await expect(pickupPromise).rejects.toBeInstanceOf(RelayError);
+        await expect(pickupPromise).rejects.toMatchObject({ message: /missing envelope/ });
+        transport.close();
+    });
+
+    test('challenge response with ok:true but missing challenge field fails closed', async () => {
+        localStorage.setItem('relayWsUrl', 'ws://test:8000');
+        const transport = new RelayTransport();
+        const challengePromise = transport.requestChallenge('mia');
+
+        const ws = await connectAndOpen();
+        await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
+        // ok:true but no `challenge` and no `challenge_id`.
+        ws._message(JSON.stringify({ ok: true, challenge_id: 'abc' }));
+
+        await expect(challengePromise).rejects.toBeInstanceOf(RelayError);
+        await expect(challengePromise).rejects.toMatchObject({ message: /missing fields/ });
+        transport.close();
+    });
+
+    test('challenge response with ok:true but missing challenge_id fails closed', async () => {
+        localStorage.setItem('relayWsUrl', 'ws://test:8000');
+        const transport = new RelayTransport();
+        const challengePromise = transport.requestChallenge('noah');
+
+        const ws = await connectAndOpen();
+        await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
+        // ok:true with a challenge but no challenge_id.
+        const context = new TextEncoder().encode('ws-relay-v1');
+        const nonce = new Uint8Array(16).fill(1);
+        const wire = makeChallengeWire(context, nonce, 8);
+        ws._message(JSON.stringify({ ok: true, challenge: bytesToBase64(wire) }));
+
+        await expect(challengePromise).rejects.toBeInstanceOf(RelayError);
+        await expect(challengePromise).rejects.toMatchObject({ message: /missing fields/ });
+        transport.close();
+    });
+
+    test('response missing the ok field entirely fails closed (not swallowed)', async () => {
+        localStorage.setItem('relayWsUrl', 'ws://test:8000');
+        const transport = new RelayTransport();
+        const lookupPromise = transport.lookupPrekey('olivia');
+
+        const ws = await connectAndOpen();
+        await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
+        // Valid JSON, but no `ok` field at all — hits the else branch.
+        ws._message(JSON.stringify({ bundle: bytesToBase64(new Uint8Array([1])) }));
+
+        await expect(lookupPromise).rejects.toBeInstanceOf(RelayError);
+        await expect(lookupPromise).rejects.toMatchObject({ message: /missing ok field/ });
+        transport.close();
+    });
+});
