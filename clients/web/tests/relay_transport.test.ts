@@ -163,6 +163,12 @@ describe('relay URL configuration', () => {
         expect(src.default).not.toContain("'ws://localhost:8000'");
         expect(src.default).not.toContain('"ws://localhost:8000"');
     });
+
+    test('hardcoded ws://localhost:8000 is also gone from the legacy websocket_transport', async () => {
+        const src = await import('../src/websocket_transport.ts?raw');
+        expect(src.default).not.toContain("'ws://localhost:8000'");
+        expect(src.default).not.toContain('"ws://localhost:8000"');
+    });
 });
 
 // ── PoW solver tests ─────────────────────────────────────────────────────────
