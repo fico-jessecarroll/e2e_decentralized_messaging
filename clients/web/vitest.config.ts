@@ -14,6 +14,12 @@ export default defineConfig({
       allow: ['../..'],
     },
   },
+  define: {
+    // Provide a build-time default for the relay WS URL so tests can verify
+    // the URL is read from config (not hardcoded). In production builds this
+    // is set via Vite's .env mechanism (VITE_RELAY_WS_URL).
+    'import.meta.env.VITE_RELAY_WS_URL': JSON.stringify('ws://env-relay.example:7000'),
+  },
   test: {
     globals: true,
     // Default stays Node so tests/smoke.test.ts's Uint8Array (built from

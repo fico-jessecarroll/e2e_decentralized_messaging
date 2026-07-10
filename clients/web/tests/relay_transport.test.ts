@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom';
-import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, test, expect, beforeEach } from 'vitest';
 
 // ── Mock WebSocket ──────────────────────────────────────────────────────────
 //
 // We install a minimal WebSocket mock on `globalThis` so the transport module
 // (which calls `new WebSocket(url)`) can be exercised without a real network.
-// Each test configures the mock's behaviour via `mockWs.instances` and the
-// helper `lastWs()`.
+// The transport creates the WebSocket lazily on the first op, so tests must
+// call an op first, then use `lastWs()` to grab the mock instance.
 
 interface MockWsInstance {
     url: string;
@@ -28,6 +28,10 @@ interface MockWsInstance {
 
 class MockWebSocket {
     static instances: MockWsInstance[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
     url: string;
     readyState = 0; // CONNECTING
     onopen: ((ev: Event) => void) | null = null;
@@ -66,6 +70,14 @@ function lastWs(): MockWsInstance {
     const inst = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     if (!inst) throw new Error('no WebSocket instance created');
     return inst;
+}
+
+/** Wait for the transport to create a WebSocket, then return it and open it. */
+async function connectAndOpen(): Promise<MockWsInstance> {
+    await vi.waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(1));
+    const ws = lastWs();
+    ws._open();
+    return ws;
 }
 
 // Install the mock before importing the module under test.
@@ -110,6 +122,14 @@ function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Synchronous SHA-256 for test verification (uses Node crypto). */
+function sha256Sync(data: Uint8Array): Uint8Array {
+    const { createHash } = require('crypto');
+    const h = createHash('sha256');
+    h.update(Buffer.from(data));
+    return new Uint8Array(h.digest());
+}
+
 // ── Config / URL tests ───────────────────────────────────────────────────────
 
 describe('relay URL configuration', () => {
@@ -128,12 +148,18 @@ describe('relay URL configuration', () => {
         // We can't easily set it per-test, but we can verify the function
         // does not return the old hardcoded value.
         const url = getRelayWsUrl();
+        // In the test environment, VITE_RELAY_WS_URL is set via .env.test
+        // to ws://env-relay.example:7000. If it's not set (e.g. running
+        // without the .env), we still verify it's not the old hardcoded
+        // value by checking it's either the env value or a dev fallback
+        // that is clearly not the production assumption.
         expect(url).not.toBe('ws://localhost:8000');
     });
 
     test('hardcoded ws://localhost:8000 is not present in the source', async () => {
         // Regression guard: the old hardcoded URL must be gone from the module.
         const src = await import('../src/relay_transport.ts?raw');
+        // The string must not appear as a string literal in the source.
         expect(src.default).not.toContain("'ws://localhost:8000'");
         expect(src.default).not.toContain('"ws://localhost:8000"');
     });
@@ -147,8 +173,8 @@ describe('PoW solver', () => {
         const nonce = new Uint8Array(16).fill(7);
         const wire = makeChallengeWire(context, nonce, 20);
         const parsed = parseChallengeWire(wire);
-        expect(parsed.context).toEqual(context);
-        expect(parsed.nonce).toEqual(nonce);
+        expect(Array.from(parsed.context)).toEqual(Array.from(context));
+        expect(Array.from(parsed.nonce)).toEqual(Array.from(nonce));
         expect(parsed.difficulty).toBe(20);
     });
 
@@ -165,9 +191,6 @@ describe('PoW solver', () => {
         const full = new Uint8Array(preimage.length + solution.length);
         full.set(preimage, 0);
         full.set(solution, preimage.length);
-        // Use Web Crypto SHA-256
-        // (jsdom provides crypto.subtle)
-        // We verify synchronously via a manual check using a small helper.
         const digest = sha256Sync(full);
         // 20 bits = 2 full zero bytes + 4 bits of the third byte zero
         expect(digest[0]).toBe(0);
@@ -185,15 +208,6 @@ describe('PoW solver', () => {
     });
 });
 
-// Synchronous SHA-256 for test verification (avoids async crypto.subtle).
-function sha256Sync(data: Uint8Array): Uint8Array {
-    // Use Node's crypto in the test environment.
-    const { createHash } = require('crypto');
-    const h = createHash('sha256');
-    h.update(Buffer.from(data));
-    return new Uint8Array(h.digest());
-}
-
 // ── Outbound JSON shape tests ────────────────────────────────────────────────
 
 describe('outbound request JSON shapes', () => {
@@ -207,10 +221,7 @@ describe('outbound request JSON shapes', () => {
         const transport = new RelayTransport();
         const challengePromise = transport.requestChallenge('alice');
 
-        // The WebSocket is created lazily on first op; wait for it.
-        await vi.waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(1));
-        const ws = lastWs();
-        ws._open();
+        const ws = await connectAndOpen();
 
         // The first sent message must be the challenge request.
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
@@ -234,11 +245,10 @@ describe('outbound request JSON shapes', () => {
     test('publish_prekey op sends exact JSON shape', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const bundle = new Uint8Array([1, 2, 3, 4, 5]);
         const publishPromise = transport.publishPrekey('bob', bundle);
+
+        const ws = await connectAndOpen();
 
         // First message: challenge request
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
@@ -274,10 +284,9 @@ describe('outbound request JSON shapes', () => {
     test('lookup_prekey op sends exact JSON shape', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const lookupPromise = transport.lookupPrekey('carol');
+
+        const ws = await connectAndOpen();
 
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
         expect(JSON.parse(ws.sent[0])).toEqual({ op: 'lookup_prekey', recipient_id: 'carol' });
@@ -291,11 +300,10 @@ describe('outbound request JSON shapes', () => {
     test('send_envelope op sends exact JSON shape', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const envelope = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
         const sendPromise = transport.sendEnvelope('dave', envelope);
+
+        const ws = await connectAndOpen();
 
         // First: challenge
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
@@ -328,10 +336,9 @@ describe('outbound request JSON shapes', () => {
     test('pickup_envelope op sends exact JSON shape', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const pickupPromise = transport.pickupEnvelope('eve');
+
+        const ws = await connectAndOpen();
 
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
         expect(JSON.parse(ws.sent[0])).toEqual({ op: 'pickup_envelope', recipient_id: 'eve' });
@@ -354,10 +361,9 @@ describe('error handling', () => {
     test('ok:false response propagates as a typed RelayError', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const lookupPromise = transport.lookupPrekey('frank');
+
+        const ws = await connectAndOpen();
 
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
         ws._message(JSON.stringify({ ok: false, error: 'NotFound' }));
@@ -370,10 +376,9 @@ describe('error handling', () => {
     test('malformed JSON response fails closed with a caught error', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const lookupPromise = transport.lookupPrekey('grace');
+
+        const ws = await connectAndOpen();
 
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
         ws._message('not valid json {{{');
@@ -385,10 +390,9 @@ describe('error handling', () => {
     test('connection error surfaces a visible error (not a silent hang)', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const lookupPromise = transport.lookupPrekey('heidi');
+
+        const ws = await connectAndOpen();
 
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
         // Simulate connection drop / error
@@ -402,11 +406,12 @@ describe('error handling', () => {
     test('unreachable relay URL surfaces error on connect', async () => {
         localStorage.setItem('relayWsUrl', 'ws://unreachable.invalid:9999');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        // Simulate connection failure (onerror fires before onopen)
-        ws._error();
-
         const lookupPromise = transport.lookupPrekey('ivan');
+
+        // Wait for the WebSocket to be created, then simulate connection failure.
+        await vi.waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(1));
+        const ws = lastWs();
+        ws._error();
 
         await expect(lookupPromise).rejects.toBeInstanceOf(RelayError);
         transport.close();
@@ -415,10 +420,9 @@ describe('error handling', () => {
     test('ok:false on challenge propagates as typed error for publishPrekey', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
         const transport = new RelayTransport();
-        const ws = lastWs();
-        ws._open();
-
         const publishPromise = transport.publishPrekey('judy', new Uint8Array([1]));
+
+        const ws = await connectAndOpen();
 
         await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThanOrEqual(1));
         ws._message(JSON.stringify({ ok: false, error: 'RateLimitExceeded' }));

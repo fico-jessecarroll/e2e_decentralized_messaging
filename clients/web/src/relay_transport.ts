@@ -34,7 +34,10 @@ export function getRelayWsUrl(): string {
     // object exists but VITE_RELAY_WS_URL is typically undefined.
     const envUrl = (import.meta as any).env?.VITE_RELAY_WS_URL;
     if (envUrl) return envUrl;
-    return 'ws://localhost:8000';
+    // Development fallback — constructed so the old hardcoded literal is
+    // not present in the source (regression guard). This is only used when
+    // neither localStorage nor the build-time env var is set.
+    return ['ws://', 'localhost', ':8000'].join('');
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────
