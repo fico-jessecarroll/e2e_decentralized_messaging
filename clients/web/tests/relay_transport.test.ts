@@ -202,7 +202,7 @@ describe('PoW solver', () => {
         expect(digest[0]).toBe(0);
         expect(digest[1]).toBe(0);
         expect(digest[2] & 0xf0).toBe(0);
-    });
+    }, 15000); // 20-bit brute-force PoW can exceed Vitest's default 5000ms on slow CI
 
     test('solvePow solution is 8 bytes (u64 little-endian counter)', async () => {
         const context = new TextEncoder().encode('ws-relay-v1');
@@ -296,7 +296,7 @@ describe('outbound request JSON shapes', () => {
         ws._message(JSON.stringify({ ok: true }));
         await publishPromise;
         transport.close();
-    });
+    }, 15000); // 20-bit brute-force PoW can exceed Vitest's default 5000ms on slow CI
 
     test('lookup_prekey op sends exact JSON shape', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
@@ -348,7 +348,7 @@ describe('outbound request JSON shapes', () => {
         ws._message(JSON.stringify({ ok: true }));
         await sendPromise;
         transport.close();
-    });
+    }, 15000); // 20-bit brute-force PoW can exceed Vitest's default 5000ms on slow CI
 
     test('pickup_envelope op sends exact JSON shape', async () => {
         localStorage.setItem('relayWsUrl', 'ws://test:8000');
