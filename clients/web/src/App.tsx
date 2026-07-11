@@ -14,6 +14,7 @@ import {
     publishPrekeyForIdentity,
     type PersistedIdentity,
 } from './identity';
+import type { SessionHandle } from '../../../core/bindings/wasm/pkg/index.js';
 import { RelayTransport } from './relay_transport';
 import './design/AppShell.css';
 
@@ -55,6 +56,7 @@ const NAV_ITEMS: { id: ViewId; label: string; title: string; subtitle: string }[
 
 export default function App() {
     const [identity, setIdentity] = React.useState<PersistedIdentity | null>(null);
+    const [receiverSession, setReceiverSession] = React.useState<InstanceType<typeof SessionHandle> | null>(null);
     const [publishError, setPublishError] = React.useState<string | null>(null);
     const [copied, setCopied] = React.useState(false);
     const [view, setView] = React.useState<ViewId>('direct');
@@ -97,7 +99,9 @@ export default function App() {
             // leave the identity unpublished.
             try {
                 const transport = new RelayTransport();
-                await publishPrekeyForIdentity(id, transport);
+                const session = await publishPrekeyForIdentity(id, transport);
+                if (cancelled) return;
+                setReceiverSession(session);
             } catch (err) {
                 setPublishError(
                     err instanceof Error ? err.message : 'Failed to publish prekey to relay',
@@ -183,6 +187,7 @@ export default function App() {
                                 {view === 'direct' && (
                                     <Conversation
                                         identity={identity ?? undefined}
+                                        receiverSession={receiverSession ?? undefined}
                                         onRemoteIdentityKeyChange={handleRemoteIdentityKeyChange}
                                     />
                                 )}

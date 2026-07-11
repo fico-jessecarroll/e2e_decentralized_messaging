@@ -60,6 +60,8 @@ vi.mock('../../../core/bindings/wasm/pkg/index.js', () => ({
         };
     },
     generate_prekey_bundle: () => new Uint8Array([1, 2, 3, 4, 5]),
+    create_receiver_session: () => ({ _mock: 'receiver-session' }),
+    publish_bundle_bytes: () => new Uint8Array([1, 2, 3, 4, 5]),
     derive_safety_number: () => '00000 00000',
 }));
 vi.mock('../src/wasm_init', () => ({ ensureWasmInit: async () => {} }));
@@ -83,6 +85,11 @@ vi.mock('../src/relay_transport', () => ({
         return {
             publishPrekey: (...args: unknown[]) => mockHolder.publishPrekey(...args),
             connect: (...args: unknown[]) => mockHolder.connect(...args),
+            // The receive loop polls pickupEnvelope on mount. Return a
+            // NotFound rejection so it's treated as an empty poll (no
+            // error banner, no console spam) rather than crashing with
+            // "pickupEnvelope is not a function".
+            pickupEnvelope: () => Promise.reject(new Error('NotFound')),
         };
     }),
 }));

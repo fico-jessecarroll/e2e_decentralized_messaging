@@ -134,6 +134,6 @@ hardcoded** — it is resolved at runtime by `getRelayWsUrl()` (in
    neither of the above is set. This is intentionally a dev default, not a
    production assumption.
 
-Both `RelayTransport` (the real wire-protocol client) and the legacy
-`websocket_transport.ts` (used by `Conversation.tsx`) resolve the relay URL
-through this same function, so the override applies uniformly.
+Both `RelayTransport` (the real wire-protocol client used by `Conversation.tsx`)
+and the legacy `websocket_transport.ts` resolve the relay URL through this same
+function, so the override applies uniformly.

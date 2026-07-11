@@ -76,6 +76,8 @@ vi.mock('../../../core/bindings/wasm/pkg/index.js', () => ({
         generatePrekeyBundleCalls++;
         return new Uint8Array([1, 2, 3, 4, 5]); // fake bundle bytes
     },
+    create_receiver_session: (_identity: unknown) => ({ _mock: 'receiver-session' }),
+    publish_bundle_bytes: (_session: unknown) => new Uint8Array([1, 2, 3, 4, 5]),
     derive_safety_number: () => '00000 00000',
 }));
 vi.mock('../src/wasm_init', () => ({ ensureWasmInit: async () => {} }));
@@ -154,8 +156,9 @@ describe('persistent identity', () => {
         expect(recipientIdArg).toBe(id.recipientId);
         expect(bundleArg).toBeInstanceOf(Uint8Array);
         expect(bundleArg.length).toBeGreaterThan(0);
-        // The bundle came from generate_prekey_bundle (mocked above).
-        expect(generatePrekeyBundleCalls).toBe(1);
+        // The bundle came from publish_bundle_bytes (mocked above), not
+        // generate_prekey_bundle — the old path dropped the session.
+        expect(generatePrekeyBundleCalls).toBe(0);
     });
 
     test('recipient ID rendered matches the persisted identity public bytes', async () => {
