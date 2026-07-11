@@ -8,6 +8,15 @@ description = "Standalone, self-hostable blind store-and-forward relay node"
 name = "relay"
 path = "src/main.rs"
 
+# Test-only binary: starts the WS listener on a random localhost port, prints
+# the bound address to stdout, and runs until killed. Used by the web client's
+# cross-language integration test (clients/web/tests/relay_integration.test.ts)
+# which shells out to `cargo run --bin relay_ws_test_harness` and connects via
+# the TypeScript RelayTransport. Not shipped in production builds.
+[[bin]]
+name = "relay_ws_test_harness"
+path = "src/bin/ws_test_harness.rs"
+
 [lib]
 name = "relay"
 path = "src/lib.rs"
