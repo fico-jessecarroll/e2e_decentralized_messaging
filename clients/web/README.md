@@ -66,10 +66,10 @@ can run the client without installing Rust, wasm-pack, or Node:
    npx serve web-client-dist
    # or: python3 -m http.server -d web-client-dist 8000
    ```
-3. Open the printed URL and point the client at your relay at runtime:
-   ```js
-   localStorage.setItem('relayWsUrl', 'ws://my-relay.example:8000');
-   ```
+3. Open the printed URL and point the client at your relay. The left rail has a
+   **Relay URL** field — enter your relay's `ws://` or `wss://` address and click
+   **Apply**. (You can also set it from the console:
+   `localStorage.setItem('relayWsUrl', 'ws://my-relay.example:8000')`.)
 
 **The artifact must be served over HTTP.** Opening `index.html` via `file://`
 will not work — browsers block WASM instantiation and `fetch()` from `file:`
@@ -145,7 +145,15 @@ The web client connects to the relay over WebSocket. The relay URL is **not
 hardcoded** — it is resolved at runtime by `getRelayWsUrl()` (in
 `src/relay_transport.ts`), with the following priority (highest first):
 
-1. **`localStorage["relayWsUrl"]`** — runtime override. Set this in the browser
+1. **In-app Relay URL field** — the left rail shows a **Relay URL** input and
+   the connection status (Connecting / Connected / Can't reach relay). Enter a
+   `ws://` or `wss://` URL and click **Apply** to switch relays at runtime; the
+   publish retries with backoff and auto-recovers when the relay becomes
+   reachable. Clearing the field resets to the default below. This is the
+   recommended way to change the relay. It writes `localStorage["relayWsUrl"]`
+   under the hood, so it is exactly the override described next.
+
+2. **`localStorage["relayWsUrl"]`** — runtime override. Set this in the browser
    console or app code to point at a specific relay, e.g.:
    ```js
    localStorage.setItem('relayWsUrl', 'ws://my-relay.example:8000');
@@ -153,15 +161,15 @@ hardcoded** — it is resolved at runtime by `getRelayWsUrl()` (in
    This takes effect immediately for new connections (no reload needed if the
    transport is re-created).
 
-2. **`VITE_RELAY_WS_URL`** — build-time Vite env var. Set it in `.env` (or
+3. **`VITE_RELAY_WS_URL`** — build-time Vite env var. Set it in `.env` (or
    `.env.production`) before building:
    ```sh
    VITE_RELAY_WS_URL=ws://relay.example.com:8000 npm run build
    ```
    The value is baked into the bundle at build time.
 
-3. **`ws://localhost:8000`** — last-resort development fallback, used only when
-   neither of the above is set. This is intentionally a dev default, not a
+4. **`ws://localhost:8000`** — last-resort development fallback, used only when
+   none of the above are set. This is intentionally a dev default, not a
    production assumption.
 
 Both `RelayTransport` (the real wire-protocol client used by `Conversation.tsx`)
