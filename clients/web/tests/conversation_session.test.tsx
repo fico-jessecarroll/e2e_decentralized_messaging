@@ -84,6 +84,7 @@ describe('Conversation session establishment and encrypted send', () => {
         const transport = {
             lookupPrekey: vi.fn().mockResolvedValue(bobBundle),
             sendEnvelope,
+            pickupEnvelope: vi.fn().mockRejectedValue(new Error('NotFound')),
         };
 
         render(<Conversation identity={alice} transport={transport} />);
@@ -118,6 +119,7 @@ describe('Conversation session establishment and encrypted send', () => {
             sendEnvelope: vi.fn().mockImplementation(async (_id: string, envelope: Uint8Array) => {
                 capturedEnvelope = envelope;
             }),
+            pickupEnvelope: vi.fn().mockRejectedValue(new Error('NotFound')),
         };
 
         render(<Conversation identity={alice} transport={transport} />);
@@ -140,6 +142,7 @@ describe('Conversation session establishment and encrypted send', () => {
         const transport = {
             lookupPrekey: vi.fn().mockRejectedValue(new Error('relay: recipient not found')),
             sendEnvelope,
+            pickupEnvelope: vi.fn().mockRejectedValue(new Error('NotFound')),
         };
 
         render(<Conversation identity={alice} transport={transport} />);
@@ -165,6 +168,7 @@ describe('Conversation session establishment and encrypted send', () => {
         const transport = {
             lookupPrekey: vi.fn().mockResolvedValue(tamperedBundle),
             sendEnvelope,
+            pickupEnvelope: vi.fn().mockRejectedValue(new Error('NotFound')),
         };
 
         render(<Conversation identity={alice} transport={transport} />);
@@ -195,6 +199,7 @@ describe('Conversation session establishment and encrypted send', () => {
         const transport = {
             lookupPrekey: vi.fn().mockResolvedValue(bobBundle),
             sendEnvelope: vi.fn().mockResolvedValue(undefined),
+            pickupEnvelope: vi.fn().mockRejectedValue(new Error('NotFound')),
         };
         const onRemoteIdentityKeyChange = vi.fn();
 
@@ -225,7 +230,7 @@ describe('Conversation session establishment and encrypted send', () => {
 
     test('composer send is blocked until a peer id, a message, and an identity are all present', async () => {
         const alice = toIdentity(generate_identity());
-        const transport = { lookupPrekey: vi.fn(), sendEnvelope: vi.fn() };
+        const transport = { lookupPrekey: vi.fn(), sendEnvelope: vi.fn(), pickupEnvelope: vi.fn().mockRejectedValue(new Error('NotFound')) };
 
         const { rerender } = render(<Conversation transport={transport} />);
         // No identity at all: composer must not allow sending.

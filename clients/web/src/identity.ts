@@ -26,7 +26,10 @@
 import {
     generate_identity,
     identity_from_bytes,
-    generate_prekey_bundle,
+    create_receiver_session,
+    publish_bundle_bytes,
+    type SessionHandle,
+    type IdentityHandle,
 } from '../../../core/bindings/wasm/pkg/index.js';
 import type { StorageGate } from './storage';
 
@@ -209,19 +212,32 @@ export interface PrekeyTransport {
 }
 
 /**
- * Generate a PQXDH prekey bundle for the given identity and publish it to
- * the relay via the transport's `publishPrekey` op, keyed by the recipient ID.
+ * Create a receiver (Bob) session for the given identity, publish its prekey
+ * bundle to the relay, and return the session handle.
+ *
+ * This is the critical wiring point: the session that publishes the bundle
+ * MUST be the same session that later decrypts messages encrypted to that
+ * bundle. `generate_prekey_bundle` creates a session internally and drops it
+ * (only bytes come back), so we cannot use it here — we use
+ * `create_receiver_session` + `publish_bundle_bytes` instead, which produce
+ * the bundle from a retained session handle we can hand to the receive loop.
  *
  * If the relay is unreachable, `publishPrekey` rejects and the error
  * propagates — the caller must surface a visible error state, not swallow it.
  *
  * @param identity The loaded/generated identity.
  * @param transport The relay transport (or a mock).
+ * @returns The receiver session handle — pass this to `<Conversation receiverSession={...} />`
+ *          so the receive loop decrypts with the same session whose bundle was published.
  */
 export async function publishPrekeyForIdentity(
     identity: PersistedIdentity,
     transport: PrekeyTransport,
-): Promise<void> {
-    const bundle = generate_prekey_bundle(identity.handle);
+): Promise<InstanceType<typeof SessionHandle>> {
+    const session = create_receiver_session(
+        identity.handle as unknown as InstanceType<typeof IdentityHandle>,
+    );
+    const bundle = publish_bundle_bytes(session);
     await transport.publishPrekey(identity.recipientId, bundle);
+    return session;
 }

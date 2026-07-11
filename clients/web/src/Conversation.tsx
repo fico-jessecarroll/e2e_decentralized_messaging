@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
     establish_session_from_bundle,
     encrypt_message,
+    decrypt_message,
     bundle_identity_key_bytes,
     SessionHandle,
 } from '../../../core/bindings/wasm/pkg/index.js';
@@ -28,6 +29,13 @@ export interface Message {
 export interface ConversationTransport {
     lookupPrekey(recipientId: string): Promise<Uint8Array>;
     sendEnvelope(recipientId: string, envelope: Uint8Array): Promise<void>;
+    /**
+     * Pick up a stored envelope addressed to `recipientId` (the local user's own
+     * recipient ID). Returns the raw envelope bytes. Rejects with an error whose
+     * message is "NotFound" or "Expired" when the mailbox is empty — the receive
+     * loop treats these as a normal empty poll, not an exceptional condition.
+     */
+    pickupEnvelope(recipientId: string): Promise<Uint8Array>;
 }
 
 export interface ConversationProps {
@@ -42,6 +50,18 @@ export interface ConversationProps {
      * SafetyNumberVerification instead of a placeholder.
      */
     onRemoteIdentityKeyChange?: (peerId: string, remoteIdentityKey: Uint8Array | null) => void;
+    /**
+     * The receiver session whose prekey bundle was published to the relay.
+     * In production, App.tsx creates this via `publishPrekeyForIdentity`
+     * (which calls `create_receiver_session` + `publish_bundle_bytes`) and
+     * passes it here so the receive loop decrypts with the same session that
+     * published the bundle. Tests inject a session whose published bundle a
+     * simulated peer has already encrypted to, mirroring the round-trip test
+     * pattern from the prior story. This is NOT a parallel session store —
+     * it is the single receiver-side session, supplied externally so the
+     * publish and receive paths share key material.
+     */
+    receiverSession?: InstanceType<typeof SessionHandle>;
 }
 
 // StoreName is a type, not a runtime object - 'messages' is a plain string
@@ -67,12 +87,14 @@ export const Conversation: React.FC<ConversationProps> = ({
     identity,
     transport,
     onRemoteIdentityKeyChange,
+    receiverSession,
 }) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [peerId, setPeerId] = useState('');
     const [input, setInput] = useState('');
     const [status, setStatus] = useState<string>('');
     const [sending, setSending] = useState(false);
+    const [decryptionWarning, setDecryptionWarning] = useState<string>('');
     const loadedRef = React.useRef(false);
     // SessionHandle is a WASM-side opaque handle with no serialization support (see
     // core/bindings/wasm/src/lib.rs's SessionHandle doc comment) - it is kept in this
@@ -80,6 +102,29 @@ export const Conversation: React.FC<ConversationProps> = ({
     // in-flight session state and the next send re-establishes from scratch.
     const sessionsRef = useRef<Map<string, PeerSession>>(new Map());
     const transportRef = useRef<ConversationTransport>(transport ?? new RelayTransport());
+    // Receiver-side session for decrypting inbound envelopes. Injected by the
+    // caller (App.tsx) via the `receiverSession` prop — this is the SAME session
+    // whose prekey bundle was published to the relay, so envelopes encrypted to
+    // that bundle can be decrypted here. The component does NOT create its own
+    // session, because that would be cryptographically distinct from the published
+    // bundle. Like SessionHandle, it is not serializable and lives only for the
+    // component's lifetime.
+    const receiverSessionRef = useRef<InstanceType<typeof SessionHandle> | null>(null);
+    // Mirror the `receiverSession` prop into a ref so the receive-loop effect (which
+    // depends on `[identity]`, not `receiverSession`) always reads the latest value.
+    // App.tsx sets `identity` first and `receiverSession` later (after the async prekey
+    // publish completes); without this ref, the effect's closure would capture a stale
+    // `receiverSession === undefined` and every poll would bail out early.
+    const receiverSessionPropRef = useRef<InstanceType<typeof SessionHandle> | undefined>(undefined);
+    receiverSessionPropRef.current = receiverSession;
+    // Set of envelope byte-strings already processed, to dedup across polls (the relay
+    // may return the same envelope on consecutive pickups until it's consumed).
+    const seenEnvelopesRef = useRef<Set<string>>(new Set());
+    // Guards against overlapping polls: if a pollOnce is still in flight when the
+    // interval fires again, skip the new invocation rather than running two
+    // concurrent pickups (which could double-process an envelope before dedup
+    // sees it, or create unnecessary relay load).
+    const pollInFlightRef = useRef<boolean>(false);
 
     // Load history from storage on mount
     useEffect(() => {
@@ -103,6 +148,104 @@ export const Conversation: React.FC<ConversationProps> = ({
         // StorageGate.put already serializes the value - don't stringify twice.
         gate.open().then(() => gate.put(MESSAGES_STORE, HISTORY_ID, messages)).catch(console.error);
     }, [messages]);
+
+    // ── Receive loop ───────────────────────────────────────────────────────
+    // Poll the relay for inbound envelopes addressed to the local user (by their own
+    // recipient ID) on a fixed interval while the component is mounted. On a successful
+    // pickup, decrypt with the receiver-side session and append the plaintext to the
+    // message history. NotFound/Expired (empty mailbox) are normal, not errors. A
+    // decrypt failure (tampered ciphertext, AEAD auth failure) fails closed: no
+    // plaintext is rendered and a visible role='alert' warning is surfaced.
+    useEffect(() => {
+        if (!identity) return;
+
+        let cancelled = false;
+        let timer: ReturnType<typeof setInterval> | null = null;
+
+        const POLL_INTERVAL_MS = 5000;
+
+        async function pollOnce() {
+            if (cancelled) return;
+            if (pollInFlightRef.current) return; // skip overlapping poll
+            pollInFlightRef.current = true;
+            try {
+                await ensureWasmInit();
+
+                // Use the receiver session injected by the caller (App.tsx).
+                // This is the SAME session whose prekey bundle was published to
+                // the relay — so envelopes encrypted to that bundle can be
+                // decrypted here. The component does NOT create its own session
+                // lazily, because that would be a cryptographically distinct
+                // session unrelated to the published bundle.
+                if (!receiverSessionRef.current) {
+                    const propSession = receiverSessionPropRef.current;
+                    if (!propSession) return; // session not ready yet
+                    receiverSessionRef.current = propSession;
+                }
+
+                const envelope: Uint8Array = await transportRef.current.pickupEnvelope(
+                    identity!.recipientId,
+                );
+
+                // Dedup: the relay may return the same envelope on consecutive polls.
+                const envelopeKey = Buffer.from(envelope).toString('base64');
+                if (seenEnvelopesRef.current.has(envelopeKey)) return;
+                seenEnvelopesRef.current.add(envelopeKey);
+
+                // Decrypt — fail closed. A tampered/corrupted envelope throws here;
+                // we surface a warning and never render any plaintext.
+                let plaintext: Uint8Array;
+                try {
+                    plaintext = decrypt_message(receiverSessionRef.current, envelope);
+                } catch (e) {
+                    const msg = describeError(e);
+                    console.warn('decrypt failed for picked-up envelope', { error: msg });
+                    setDecryptionWarning(
+                        'A received message could not be verified and was discarded. ' +
+                        'This may indicate a tampered or corrupted message.',
+                    );
+                    return;
+                }
+
+                // Success: clear any prior warning and append the decrypted message.
+                setDecryptionWarning('');
+                const body = new TextDecoder().decode(plaintext);
+                const msg: Message = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    body,
+                    timestamp: Date.now(),
+                    sentByMe: false,
+                };
+                setMessages(prev => [...prev, msg]);
+            } catch (e) {
+                // NotFound / Expired = empty mailbox, a normal condition. Do not
+                // log, do not show a warning, do not crash.
+                const msg = describeError(e);
+                if (msg === 'NotFound' || msg === 'Expired') return;
+                // Unexpected transport errors: log at warn level (not error — the
+                // loop retries on the next interval) but do not crash the UI.
+                console.warn('pickup_envelope poll failed', { error: msg });
+            } finally {
+                pollInFlightRef.current = false;
+            }
+        }
+
+        // Start polling. The interval fires pollOnce on a fixed cadence; the
+        // pollInFlightRef guard inside pollOnce skips a tick if the previous
+        // poll is still awaiting I/O, preventing overlapping/leaked work.
+        timer = setInterval(() => {
+            void pollOnce();
+        }, POLL_INTERVAL_MS);
+
+        // Also fire one immediate poll so we don't wait a full interval on mount.
+        void pollOnce();
+
+        return () => {
+            cancelled = true;
+            if (timer) clearInterval(timer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [identity]);
 
     // Report the active peer's remote identity key (or null, if no session exists for them
     // yet) whenever the peer id changes, so SafetyNumberVerification always reflects the
@@ -233,6 +376,9 @@ export const Conversation: React.FC<ConversationProps> = ({
                 />
                 <button className="composer-send" onClick={send} disabled={!canSend}>Send</button>
             </div>
+            {decryptionWarning && (
+                <p className="thread-warning" role="alert">{decryptionWarning}</p>
+            )}
             {status && <p className="thread-status">{status}</p>}
         </div>
     );
