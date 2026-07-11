@@ -47,6 +47,36 @@ Runs the Vitest suite (`vitest run`) after regenerating the WASM bindings.
 npm run build
 ```
 
+This writes a self-contained static bundle to `dist/` (`index.html` + JS + CSS +
+the `.wasm` binary + fonts). The production build targets ES2022 (Chrome 94+,
+Firefox 93+, Safari 15.4+) — a lower target makes `vite-plugin-top-level-await`
+try to downlevel the wasm-bindgen glue's destructuring, which esbuild cannot do.
+
+## Run a prebuilt artifact (no build from source)
+
+CI builds `dist/` on every push and pull request and uploads it as a workflow
+artifact named `web-client-dist` (downloadable from the Actions run page).
+Version tags (`v*`)
+also attach a `web-client-dist.zip` to the corresponding GitHub Release, so you
+can run the client without installing Rust, wasm-pack, or Node:
+
+1. Download `web-client-dist.zip` from the release and unzip it.
+2. Serve the folder over HTTP — any static server works, e.g.:
+   ```sh
+   npx serve web-client-dist
+   # or: python3 -m http.server -d web-client-dist 8000
+   ```
+3. Open the printed URL and point the client at your relay at runtime:
+   ```js
+   localStorage.setItem('relayWsUrl', 'ws://my-relay.example:8000');
+   ```
+
+**The artifact must be served over HTTP.** Opening `index.html` via `file://`
+will not work — browsers block WASM instantiation and `fetch()` from `file:`
+URLs. No relay URL is baked into the prebuilt artifact, so the same zip works
+against any relay; see "Configuring the relay endpoint" below for the full
+resolution order.
+
 React app consuming the shared Rust core via WASM bindings (`core/bindings/wasm`).
 See PLAN.md §5 for the documented reduced threat model on web (no secure enclave).
 
