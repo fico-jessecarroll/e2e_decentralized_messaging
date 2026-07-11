@@ -4,6 +4,25 @@
   height: 100%;
 }
 
+.composer-peer {
+  padding: var(--space-4) var(--space-5) 0;
+  flex-shrink: 0;
+}
+
+.composer-peer-input {
+  width: 100%;
+  background: var(--ink-800);
+  border: 1px solid var(--ink-600);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.composer-peer-input:focus {
+  border-color: var(--signal);
+}
+
 .thread-log {
   flex: 1;
   overflow-y: auto;

@@ -58,6 +58,20 @@ export default function App() {
     const [publishError, setPublishError] = React.useState<string | null>(null);
     const [copied, setCopied] = React.useState(false);
     const [view, setView] = React.useState<ViewId>('direct');
+    // The active direct-conversation peer and their real remote identity key, reported by
+    // Conversation once a session has been established (lookup_prekey + establish_session_from_bundle)
+    // — see Conversation's onRemoteIdentityKeyChange prop. SafetyNumberVerification renders this
+    // real key instead of a demo/self placeholder.
+    const [activePeerId, setActivePeerId] = React.useState<string>('');
+    const [remoteIdentityKey, setRemoteIdentityKey] = React.useState<Uint8Array | null>(null);
+
+    const handleRemoteIdentityKeyChange = React.useCallback(
+        (peerId: string, key: Uint8Array | null) => {
+            setActivePeerId(peerId);
+            setRemoteIdentityKey(key);
+        },
+        [],
+    );
 
     React.useEffect(() => {
         let cancelled = false;
@@ -166,7 +180,12 @@ export default function App() {
                         </header>
                         <div className="view-body">
                             <div className="view-content">
-                                {view === 'direct' && <Conversation />}
+                                {view === 'direct' && (
+                                    <Conversation
+                                        identity={identity ?? undefined}
+                                        onRemoteIdentityKeyChange={handleRemoteIdentityKeyChange}
+                                    />
+                                )}
                                 {view === 'group' && <GroupConversation />}
                                 {view === 'link' && (
                                     <SafetyNumberErrorBoundary>
@@ -181,12 +200,17 @@ export default function App() {
                                 <aside className="trust-drawer" aria-label="Conversation trust">
                                     <h2>Verify this conversation</h2>
                                     <SafetyNumberErrorBoundary>
-                                        {identity && (
+                                        {identity && remoteIdentityKey ? (
                                             <SafetyNumberVerification
                                                 localIdentityKey={identity.publicBytes}
-                                                remoteIdentityKey={identity.publicBytes}
-                                                conversationId="demo"
+                                                remoteIdentityKey={remoteIdentityKey}
+                                                conversationId={activePeerId}
                                             />
+                                        ) : (
+                                            <p className="trust-loading">
+                                                Send a message to a recipient ID to see the safety
+                                                number for this conversation.
+                                            </p>
                                         )}
                                     </SafetyNumberErrorBoundary>
                                 </aside>

@@ -52,9 +52,10 @@ async fn make_party(name: &str, device_id: u8) -> Party {
 
     let mut store = InMemSignalProtocolStore::new(identity, 42).expect("store");
 
-    let signed_prekey = generate_signed_pre_key(&identity, 1, now_ts());
+    let now = now_ts();
+    let signed_prekey = generate_signed_pre_key(&identity, 1, now);
     let kyber_prekey =
-        generate_kyber_prekey(KyberPreKeyId::from(1u32), identity.private_key()).unwrap();
+        generate_kyber_prekey(KyberPreKeyId::from(1u32), identity.private_key(), now).unwrap();
     let otpks = generate_one_time_pre_keys(1, 1);
     let otpk = otpks.first().unwrap();
 

@@ -85,9 +85,61 @@ impl WasmError {
     }
 }
 
+/// Poll `fut` to completion using a no-op waker — no thread, timer, or I/O driver required.
+///
+/// Every async function this facade drives (`DoubleRatchetSession::new_bob` / `new_alice` /
+/// `encrypt` / `decrypt`) operates over an in-memory `libsignal` store with no real I/O, so it
+/// always resolves on the first poll. A full async runtime (this crate previously used `tokio`)
+/// is therefore unnecessary: this hand-rolled single-poll driver has no dependency on threads,
+/// timers, or an I/O reactor, so it behaves identically on native and `wasm32-unknown-unknown`.
+///
+/// This alone does not make session establishment work on `wasm32-unknown-unknown` — the actual
+/// blocker there was `libsignal_protocol::KyberPreKeyRecord::generate` (reached via
+/// `crypto::ratchet_session::DoubleRatchetSession::new_bob`) calling `std::time::SystemTime::now()`
+/// internally, which panics unconditionally on that target (no OS clock, and libstd provides no
+/// hook to shim one in, unlike `getrandom`). That is fixed in `core/crypto` (see
+/// `crypto::now()` and `crypto::session::generate_kyber_prekey`'s explicit `timestamp`
+/// parameter) — this function is a smaller, complementary simplification: removing the async
+/// runtime entirely, rather than just working around what it happened to call. Neither issue was
+/// caught by `cargo test` because `#[wasm_bindgen]` is a no-op off the `wasm32` target, so these
+/// functions were only ever exercised as plain native Rust before this story, never through the
+/// actual compiled `.wasm` binary a browser (or `vite-plugin-wasm` in Vitest) runs.
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    // `Future` (needed for `.poll()` below) is already in scope via `wasm_bindgen::prelude::*`.
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    fn noop(_: *const ()) {}
+    fn clone(_: *const ()) -> RawWaker {
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    }
+    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    // SAFETY: the vtable's clone/wake/wake_by_ref/drop are all no-ops that never dereference
+    // the null data pointer, so this waker is sound to construct and use for a single poll.
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = Box::pin(fut);
+    match fut.as_mut().poll(&mut cx) {
+        Poll::Ready(v) => v,
+        Poll::Pending => unreachable!(
+            "core_bindings_wasm::block_on: future was not ready on its first poll — this \
+             facade only drives synchronous in-memory session operations, never real async I/O"
+        ),
+    }
+}
+
 impl From<SessionError> for WasmError {
     fn from(err: SessionError) -> Self {
-        WasmError::new("Session", &err.to_string())
+        // `PreKey(_)` (prekey generation/store failure) and a rejected signed-prekey/Kyber
+        // signature during establishment both name the prekey material as the culprit, so both
+        // surface as kind = "PreKey" — distinct from other establishment/encrypt/decrypt
+        // failures, which stay kind = "Session". See `establish_session_from_bundle`'s doc
+        // comment for the contract this fulfills.
+        let kind = if matches!(err, SessionError::PreKey(_)) || err.is_prekey_signature_invalid() {
+            "PreKey"
+        } else {
+            "Session"
+        };
+        WasmError::new(kind, &err.to_string())
     }
 }
 
@@ -142,11 +194,7 @@ impl SessionHandle {
 pub fn create_receiver_session(
     identity_handle: &IdentityHandle,
 ) -> Result<SessionHandle, WasmError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
-
-    let session = runtime.block_on(async {
+    let session = block_on(async {
         DoubleRatchetSession::new_bob(identity_handle.inner.as_libsignal())
             .await
             .map_err(WasmError::from)
@@ -190,11 +238,7 @@ pub fn encrypt_message(
     session: &mut SessionHandle,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, WasmError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
-
-    runtime.block_on(async {
+    block_on(async {
         session
             .inner
             .encrypt(plaintext)
@@ -214,11 +258,7 @@ pub fn encrypt_message(
 /// authentication fails (tampered ciphertext). Never panics.
 #[wasm_bindgen]
 pub fn decrypt_message(session: &mut SessionHandle, envelope: &[u8]) -> Result<Vec<u8>, WasmError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
-
-    runtime.block_on(async {
+    block_on(async {
         session
             .inner
             .decrypt(envelope)
@@ -303,11 +343,7 @@ pub fn identity_from_bytes(bytes: &[u8]) -> Result<IdentityHandle, WasmError> {
 pub fn generate_prekey_bundle(identity_handle: &IdentityHandle) -> Result<Vec<u8>, WasmError> {
     // Build a receiver (Bob) session — this generates signed/Kyber/one-time prekeys and
     // publishes a bundle. We then serialize that bundle to bytes.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
-
-    let bundle_bytes = runtime.block_on(async {
+    let bundle_bytes = block_on(async {
         let bob = DoubleRatchetSession::new_bob(identity_handle.inner.as_libsignal())
             .await
             .map_err(WasmError::from)?;
@@ -349,17 +385,42 @@ pub fn establish_session_from_bundle(
     //    verifies the signed-prekey and Kyber-prekey signatures against the bundle's identity
     //    key — a tampered or unsigned bundle fails closed here before any session state is
     //    written.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| WasmError::new("Runtime", &e.to_string()))?;
-
-    let session = runtime.block_on(async {
+    let session = block_on(async {
         DoubleRatchetSession::new_alice(identity_handle.inner.as_libsignal(), &bundle)
             .await
             .map_err(WasmError::from)
     })?;
 
     Ok(SessionHandle { inner: session })
+}
+
+/// Extract the peer's public identity key bytes from a serialized prekey bundle, without
+/// establishing a session. Callers that need the remote identity key for safety-number
+/// derivation (e.g. [`derive_safety_number`]) alongside session establishment use this
+/// read-only accessor over the same bundle bytes passed to [`establish_session_from_bundle`].
+///
+/// The returned bytes are the 33-byte serialized `IdentityKey` — the same format
+/// [`IdentityHandle::public_bytes`] returns, so the result can be passed directly to
+/// [`derive_safety_number`].
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "MalformedBundle"` if the bytes are truncated, mis-length-
+/// prefixed, or structurally invalid. Never panics. Does not verify the bundle's signatures —
+/// callers that need the signature-verified identity key should rely on
+/// [`establish_session_from_bundle`] succeeding first.
+#[wasm_bindgen]
+pub fn bundle_identity_key_bytes(bundle_bytes: &[u8]) -> Result<Vec<u8>, WasmError> {
+    let bundle = session::bundle_from_bytes(bundle_bytes).map_err(|_| {
+        WasmError::new(
+            "MalformedBundle",
+            "malformed or truncated prekey bundle bytes",
+        )
+    })?;
+    let identity_key = bundle
+        .identity_key()
+        .map_err(|e| WasmError::new("MalformedBundle", &e.to_string()))?;
+    Ok(identity_key.serialize().to_vec())
 }
 
 // ---------------------------------------------------------------------------

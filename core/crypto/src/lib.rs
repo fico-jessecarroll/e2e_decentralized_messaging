@@ -27,6 +27,25 @@ pub use ratchet_session::{DoubleRatchetSession, IdentityKeyPairExt, SessionError
 const SAFETY_NUMBER_VERSION: u32 = 1;
 const SAFETY_NUMBER_ITERATIONS: u32 = 5200;
 
+/// Wall-clock "now", portable across native and `wasm32-unknown-unknown` targets.
+///
+/// `std::time::SystemTime::now()` panics unconditionally on `wasm32-unknown-unknown` — that
+/// target has no OS clock, and Rust's std does not shim one in by default. Every call site in
+/// this crate that needs the current time (PQXDH establishment timestamps, Double Ratchet
+/// message timestamps, signed-prekey generation timestamps) goes through this helper instead,
+/// so session establishment and encrypt/decrypt behave identically whether this crate is
+/// compiled natively (UniFFI bindings) or to WASM (browser clients). On wasm32 the time comes
+/// from JS's `Date.now()` (milliseconds since the Unix epoch) via `js-sys`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn now() -> std::time::SystemTime {
+    std::time::SystemTime::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn now() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_millis(js_sys::Date::now() as u64)
+}
+
 /// Generate a new Curve25519 identity keypair from the OS CSPRNG.
 ///
 /// The private key never leaves this struct; callers must keep it confidential per the

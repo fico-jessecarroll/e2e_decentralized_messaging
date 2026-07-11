@@ -10,10 +10,11 @@
 use libsignal_protocol::{
     kem, process_prekey_bundle, GenericSignedPreKey, IdentityKey, IdentityKeyPair,
     IdentityKeyStore, KyberPreKeyId, KyberPreKeyRecord, PreKeyBundle, PreKeyRecord,
-    ProtocolAddress, SessionStore, SignalProtocolError, SignedPreKeyRecord,
+    ProtocolAddress, SessionStore, SignalProtocolError, SignedPreKeyRecord, Timestamp,
 };
+use rand::rngs::OsRng;
+use rand::TryRngCore as _;
 use rand::{CryptoRng, Rng};
-use std::time::SystemTime;
 
 pub use crate::ratchet_session::SessionError;
 
@@ -21,11 +22,27 @@ pub use crate::ratchet_session::SessionError;
 ///
 /// The signing key must be the holder's EC identity private key — the recipient verifies the
 /// signature when processing the bundle to confirm the KEM key belongs to the declared identity.
+/// `timestamp` is the caller's notion of "now" (explicit, not read from the system clock here),
+/// matching [`crate::prekey::generate_signed_pre_key`]'s existing convention.
+///
+/// Deliberately does **not** call `KyberPreKeyRecord::generate(...)`: that libsignal convenience
+/// constructor reads `std::time::SystemTime::now()` internally, which panics unconditionally on
+/// this crate's `wasm32-unknown-unknown` target (no OS clock — see `crate::now()`'s doc comment).
+/// This reimplements the same construction using libsignal's own public,
+/// timestamp-parameterized `GenericSignedPreKey::new` instead — no cryptography is
+/// reimplemented; key generation and signing still go through libsignal's own `kem::KeyPair` and
+/// `PrivateKey::calculate_signature`.
 pub fn generate_kyber_prekey(
     id: KyberPreKeyId,
     signing_key: &libsignal_protocol::PrivateKey,
+    timestamp: Timestamp,
 ) -> Result<KyberPreKeyRecord, SignalProtocolError> {
-    KyberPreKeyRecord::generate(kem::KeyType::Kyber1024, id, signing_key)
+    let mut rng = OsRng.unwrap_err();
+    let key_pair = kem::KeyPair::generate(kem::KeyType::Kyber1024, &mut rng);
+    let signature = signing_key
+        .calculate_signature(&key_pair.public_key.serialize(), &mut rng)?
+        .into_vec();
+    Ok(KyberPreKeyRecord::new(id, timestamp, &key_pair, &signature))
 }
 
 /// Assemble a PQXDH `PreKeyBundle` for publication to the DHT or relay.
@@ -85,7 +102,7 @@ pub async fn establish_outbound_session<R: Rng + CryptoRng>(
         session_store,
         identity_store,
         remote_bundle,
-        SystemTime::now(),
+        crate::now(),
         csprng,
     )
     .await
