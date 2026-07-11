@@ -244,6 +244,19 @@ impl IdentityHandle {
     pub fn public_bytes(&self) -> Vec<u8> {
         self.inner.public().to_bytes()
     }
+
+    /// Serialize the full keypair (public + private) to a self-delimiting byte
+    /// vector, suitable for encrypted persistence across sessions.
+    ///
+    /// The format is libsignal's `IdentityKeyPairStructure` protobuf (see
+    /// `libsignal_protocol::IdentityKeyPair::serialize`). The same bytes are
+    /// deserialized by [`identity_from_bytes`].
+    ///
+    /// **Security:** these bytes contain the private key. Callers must only
+    /// store them via an encrypted-at-rest mechanism (e.g. `StorageGate`).
+    pub fn private_bytes(&self) -> Vec<u8> {
+        self.inner.as_libsignal().serialize().to_vec()
+    }
 }
 
 /// Generate a fresh identity keypair from the OS CSPRNG.
@@ -252,6 +265,22 @@ pub fn generate_identity() -> IdentityHandle {
     IdentityHandle {
         inner: IdentityKeyPair::generate(),
     }
+}
+
+/// Deserialize an identity keypair from the byte vector produced by
+/// [`IdentityHandle::private_bytes`] (libsignal's `IdentityKeyPairStructure`
+/// protobuf).  This is the inverse of `private_bytes` and is used to restore
+/// a persisted identity across sessions.
+///
+/// # Errors
+///
+/// Returns `WasmError` with `kind = "Identity"` if the bytes are truncated,
+/// malformed, or otherwise unparseable.  Never panics.
+#[wasm_bindgen]
+pub fn identity_from_bytes(bytes: &[u8]) -> Result<IdentityHandle, WasmError> {
+    let keypair = IdentityKeyPair::from_bytes(bytes)
+        .map_err(|e| WasmError::new("Identity", &e.to_string()))?;
+    Ok(IdentityHandle { inner: keypair })
 }
 
 // ---------------------------------------------------------------------------

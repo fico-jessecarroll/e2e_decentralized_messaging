@@ -52,6 +52,15 @@ impl IdentityKeyPair {
         &self.0
     }
 
+    /// Deserialize a keypair from the byte vector produced by [`IdentityKeyPair::serialize`]
+    /// (i.e. libsignal's `IdentityKeyPairStructure` protobuf).
+    ///
+    /// Fails closed: malformed, truncated, or otherwise unparseable bytes return an error and
+    /// produce no keypair. This is the inverse of the WASM binding's `IdentityHandle::private_bytes`.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, libsignal_protocol::error::SignalProtocolError> {
+        Ok(Self(libsignal_protocol::IdentityKeyPair::try_from(bytes)?))
+    }
+
     /// Open a blob previously sealed to this keypair's public key with [`PublicIdentityKey::seal`].
     ///
     /// Fails closed: any structural or authentication failure returns [`SealError`] and no
@@ -287,5 +296,18 @@ mod tests {
         // once seal() actually tries to decode them.
         let garbage = PublicIdentityKey::from_bytes(&[0xFFu8; 16]);
         assert!(matches!(garbage.seal(b"x"), Err(SealError::Malformed)));
+    }
+
+    #[test]
+    fn keypair_from_bytes_round_trips_the_public_key() {
+        let kp = IdentityKeyPair::generate();
+        let serialized = kp.as_libsignal().serialize();
+        let restored = IdentityKeyPair::from_bytes(&serialized).unwrap();
+        assert_eq!(kp.public().to_bytes(), restored.public().to_bytes());
+    }
+
+    #[test]
+    fn keypair_from_bytes_rejects_garbage() {
+        assert!(IdentityKeyPair::from_bytes(&[0u8; 10]).is_err());
     }
 }
