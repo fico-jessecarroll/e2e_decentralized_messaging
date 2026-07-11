@@ -5,20 +5,26 @@ import { SafetyNumberVerification } from './SafetyNumberVerification';
 import { BackupPanel } from './BackupPanel';
 import { GroupConversation } from './GroupConversation';
 import { DeviceLinking } from './DeviceLinking';
-import { generate_identity } from '../../../core/bindings/wasm/pkg/index.js';
 import { ensureWasmInit } from './wasm_init';
 import { SealGlyph } from './design/SealGlyph';
+import { StorageGate } from './storage';
+import { getStorageKey } from './storage_key';
+import {
+    loadOrGenerateIdentity,
+    publishPrekeyForIdentity,
+    type PersistedIdentity,
+} from './identity';
+import { RelayTransport } from './relay_transport';
 import './design/AppShell.css';
 
 // SafetyNumberVerification's deriveSafetyNumber calls the real
 // wasm.derive_safety_number binding, which requires 33-byte compressed
-// Curve25519 identity keys and throws on any other length - a fixed
-// Uint8Array(32) (this demo's prior placeholder-era value) crashes render.
-// Generate real identity keys instead, matching the pattern already used in
-// tests/safety_number.test.tsx. Both this and the safety number derivation
-// itself require wasm_init's async init to have completed first (see
-// wasm_init.ts) - keys stay null (and SafetyNumberVerification unrendered)
-// until that finishes.
+// Curve25519 identity keys and throws on any other length.  The identity
+// is now loaded from persistent storage (or generated and persisted on
+// first run) via `loadOrGenerateIdentity`.  Both this and the safety number
+// derivation itself require wasm_init's async init to have completed first
+// (see wasm_init.ts) — the identity stays null (and SafetyNumberVerification
+// unrendered) until that finishes.
 class SafetyNumberErrorBoundary extends React.Component<
     { children: React.ReactNode },
     { error: Error | null }
@@ -48,25 +54,60 @@ const NAV_ITEMS: { id: ViewId; label: string; title: string; subtitle: string }[
 ];
 
 export default function App() {
-    const [keys, setKeys] = React.useState<{ local: Uint8Array; remote: Uint8Array } | null>(null);
+    const [identity, setIdentity] = React.useState<PersistedIdentity | null>(null);
+    const [publishError, setPublishError] = React.useState<string | null>(null);
+    const [copied, setCopied] = React.useState(false);
     const [view, setView] = React.useState<ViewId>('direct');
 
     React.useEffect(() => {
         let cancelled = false;
-        ensureWasmInit().then(() => {
+        (async () => {
+            await ensureWasmInit();
             if (cancelled) return;
-            setKeys({
-                local: generate_identity().public_bytes(),
-                remote: generate_identity().public_bytes(),
+
+            // Load persisted identity or generate+persist a new one.
+            // Fail-closed: if storage is corrupt or unavailable, this throws
+            // and the identity stays null — we never silently fall back to
+            // an unpersisted identity that would change the user's address.
+            const gate = new StorageGate({
+                indexedDB: globalThis.indexedDB,
+                keyBytes: getStorageKey(),
             });
-        });
+            await gate.open();
+            const id = await loadOrGenerateIdentity(gate);
+            if (cancelled) return;
+            setIdentity(id);
+
+            // Publish a prekey bundle to the relay so peers can reach us.
+            // A failure here surfaces a visible error — we do not silently
+            // leave the identity unpublished.
+            try {
+                const transport = new RelayTransport();
+                await publishPrekeyForIdentity(id, transport);
+            } catch (err) {
+                setPublishError(
+                    err instanceof Error ? err.message : 'Failed to publish prekey to relay',
+                );
+            }
+        })();
         return () => {
             cancelled = true;
         };
     }, []);
 
-    const identityFingerprint = keys ? btoa(String.fromCharCode(...keys.local)).slice(0, 24) : null;
+    const recipientId = identity?.recipientId ?? null;
     const activeItem = NAV_ITEMS.find((item) => item.id === view)!;
+
+    const handleCopyRecipientId = async () => {
+        if (!recipientId) return;
+        try {
+            await navigator.clipboard.writeText(recipientId);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {
+            // Clipboard API may be unavailable; ignore silently.
+        }
+    };
 
     return (
         <div className="shell">
@@ -75,13 +116,33 @@ export default function App() {
                 <div className="shell-body">
                     <nav className="rail" aria-label="Sections">
                         <div className="rail-identity">
-                            {identityFingerprint ? (
-                                <SealGlyph value={identityFingerprint} size={40} title="Your identity seal" />
+                            {recipientId ? (
+                                <SealGlyph value={recipientId} size={40} title="Your identity seal" />
                             ) : (
                                 <div style={{ width: 40, height: 40 }} />
                             )}
                             <span className="rail-identity-label">You</span>
                         </div>
+                        {recipientId && (
+                            <div className="rail-recipient-id">
+                                <button
+                                    type="button"
+                                    className="rail-recipient-id-copy"
+                                    onClick={handleCopyRecipientId}
+                                    title="Copy your recipient ID"
+                                >
+                                    <code>{recipientId}</code>
+                                    <span className="rail-recipient-id-copy-label">
+                                        {copied ? 'Copied!' : 'Copy'}
+                                    </span>
+                                </button>
+                            </div>
+                        )}
+                        {publishError && (
+                            <div className="rail-publish-error" role="alert">
+                                Prekey publish failed: {publishError}
+                            </div>
+                        )}
                         <div className="rail-nav">
                             {NAV_ITEMS.map((item) => (
                                 <button
@@ -109,7 +170,9 @@ export default function App() {
                                 {view === 'group' && <GroupConversation />}
                                 {view === 'link' && (
                                     <SafetyNumberErrorBoundary>
-                                        {keys && <DeviceLinking localIdentityKey={keys.local} />}
+                                        {identity && (
+                                            <DeviceLinking localIdentityKey={identity.publicBytes} />
+                                        )}
                                     </SafetyNumberErrorBoundary>
                                 )}
                                 {view === 'backup' && <BackupPanel storagePassword="default" />}
@@ -118,10 +181,10 @@ export default function App() {
                                 <aside className="trust-drawer" aria-label="Conversation trust">
                                     <h2>Verify this conversation</h2>
                                     <SafetyNumberErrorBoundary>
-                                        {keys && (
+                                        {identity && (
                                             <SafetyNumberVerification
-                                                localIdentityKey={keys.local}
-                                                remoteIdentityKey={keys.remote}
+                                                localIdentityKey={identity.publicBytes}
+                                                remoteIdentityKey={identity.publicBytes}
                                                 conversationId="demo"
                                             />
                                         )}
