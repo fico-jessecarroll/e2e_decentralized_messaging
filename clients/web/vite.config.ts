@@ -25,6 +25,14 @@ export default defineConfig({
     // build, not the dev server or Vitest.
     target: 'es2022',
   },
+  // Relative base so the published artifact is relocatable: index.html
+  // references its assets as `./assets/...` instead of `/assets/...`. The
+  // CI artifact unzips to a `web-client-dist/` folder, so when a consumer
+  // serves it from any subpath (e.g. `npx serve` in the parent dir → the
+  // page lives at `/web-client-dist/`), absolute `/assets/...` paths 404.
+  // A relative base makes the same zip work at the server root or any
+  // subpath, on any static host or GitHub Pages project path.
+  base: './',
   server: {
     fs: {
       // The generated WASM package (core/bindings/wasm/pkg, produced by
