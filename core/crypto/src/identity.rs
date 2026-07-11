@@ -57,7 +57,9 @@ impl IdentityKeyPair {
     ///
     /// Fails closed: malformed, truncated, or otherwise unparseable bytes return an error and
     /// produce no keypair. This is the inverse of the WASM binding's `IdentityHandle::private_bytes`.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, libsignal_protocol::error::SignalProtocolError> {
+    pub fn from_bytes(
+        bytes: &[u8],
+    ) -> Result<Self, libsignal_protocol::error::SignalProtocolError> {
         Ok(Self(libsignal_protocol::IdentityKeyPair::try_from(bytes)?))
     }
 
