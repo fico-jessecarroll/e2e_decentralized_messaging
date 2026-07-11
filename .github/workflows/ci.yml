@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # Tag pushes (v*) trigger the release job, which attaches the prebuilt
+    # web client dist to a GitHub Release so consumers can run it without
+    # building from source.
+    tags: ['v*']
   pull_request:
 
 env:
@@ -93,3 +97,58 @@ jobs:
           cache-dependency-path: clients/web/package-lock.json
       - run: npm ci
       - run: npm test
+
+  web-artifact:
+    name: web client build artifact
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+      - run: npm ci
+      # `npm run build` chains prepare-wasm (wasm-pack build) -> vite build,
+      # producing a self-contained static bundle in clients/web/dist
+      # (index.html + JS + CSS + the .wasm binary + fonts). No relay URL is
+      # baked in: VITE_RELAY_WS_URL is left unset so consumers point the
+      # artifact at any relay via localStorage["relayWsUrl"] at runtime.
+      - run: npm run build
+      - name: Upload web client dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-client-dist
+          path: clients/web/dist
+          if-no-files-found: error
+
+  release:
+    name: release web client artifact
+    # Only on version tags (v*). The push trigger above includes tags: ['v*'].
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: web-artifact
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download built dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-dist
+          path: web-client-dist
+      - name: Zip dist
+        run: zip -r web-client-dist.zip web-client-dist
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: web-client-dist.zip
