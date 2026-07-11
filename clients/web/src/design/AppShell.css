@@ -81,15 +81,121 @@
   color: var(--text-tertiary);
 }
 
-.rail-publish-error {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--danger, #e5484d);
+.rail-relay {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   padding: var(--space-1) var(--space-2);
   margin-bottom: var(--space-2);
   border-radius: var(--radius-sm);
+  background: var(--surface-raised, rgba(255, 255, 255, 0.03));
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.rail-relay-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.rail-relay-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.rail-relay-status--connected .rail-relay-indicator {
+  color: var(--signal, #2f6feb);
+}
+
+.rail-relay-status--unreachable .rail-relay-indicator {
+  color: var(--danger, #e5484d);
+}
+
+.rail-relay-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--signal, #2f6feb);
+  display: inline-block;
+}
+
+.rail-relay-retry,
+.rail-relay-details-toggle,
+.rail-relay-field-apply {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: none;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  color: var(--text-secondary);
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.rail-relay-retry:hover,
+.rail-relay-details-toggle:hover,
+.rail-relay-field-apply:hover {
+  border-color: var(--signal);
+  color: var(--text-primary);
+}
+
+.rail-relay-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rail-relay-error-detail {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--danger, #e5484d);
   background: rgba(229, 72, 77, 0.1);
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.rail-relay-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-relay-field-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.rail-relay-field-input {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--surface, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  color: var(--text-primary);
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+}
+
+.rail-relay-validation {
+  color: var(--danger, #e5484d);
+  word-break: break-word;
+}
+
+.rail-relay-resolved {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  word-break: break-all;
 }
 
 .rail-nav {

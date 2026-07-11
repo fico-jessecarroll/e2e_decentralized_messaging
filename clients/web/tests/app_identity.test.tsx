@@ -7,7 +7,7 @@
 // doesn't require a built pkg/ or a live relay.
 
 import '@testing-library/jest-dom';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react';
 import fakeIndexedDB from 'fake-indexeddb';
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
@@ -165,15 +165,23 @@ describe('App identity UI', () => {
         expect(bundle.length).toBeGreaterThan(0);
     });
 
-    test('publish_prekey failure surfaces a visible error state', async () => {
+    test('publish_prekey failure surfaces a visible unreachable state', async () => {
         mockHolder.publishPrekey = vi.fn().mockRejectedValue(new Error('relay unreachable'));
 
         render(<App />);
 
+        // The retry burst has a short backoff; once it is exhausted the rail
+        // shows a human "Can't reach relay" state instead of the old
+        // permanent "Prekey publish failed" banner.
         await waitFor(() => {
-            expect(
-                screen.getByText(/prekey publish failed/i),
-            ).toBeInTheDocument();
+            expect(screen.getByText(/can't reach relay/i)).toBeInTheDocument();
+        }, { timeout: 3000 });
+        expect(screen.queryByText(/prekey publish failed/i)).not.toBeInTheDocument();
+
+        // The raw technical error is available behind a details toggle, not
+        // shown as the headline.
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /details/i }));
         });
         expect(screen.getByText(/relay unreachable/i)).toBeInTheDocument();
     });

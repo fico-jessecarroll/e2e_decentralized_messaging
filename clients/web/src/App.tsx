@@ -9,13 +9,9 @@ import { ensureWasmInit } from './wasm_init';
 import { SealGlyph } from './design/SealGlyph';
 import { StorageGate } from './storage';
 import { getStorageKey } from './storage_key';
-import {
-    loadOrGenerateIdentity,
-    publishPrekeyForIdentity,
-    type PersistedIdentity,
-} from './identity';
-import type { SessionHandle } from '../../../core/bindings/wasm/pkg/index.js';
-import { RelayTransport } from './relay_transport';
+import { loadOrGenerateIdentity, type PersistedIdentity } from './identity';
+import { getRelayWsUrl } from './relay_transport';
+import { useRelayConnection, RelayConnectionPanel } from './useRelayConnection';
 import './design/AppShell.css';
 
 // SafetyNumberVerification's deriveSafetyNumber calls the real
@@ -56,8 +52,10 @@ const NAV_ITEMS: { id: ViewId; label: string; title: string; subtitle: string }[
 
 export default function App() {
     const [identity, setIdentity] = React.useState<PersistedIdentity | null>(null);
-    const [receiverSession, setReceiverSession] = React.useState<InstanceType<typeof SessionHandle> | null>(null);
-    const [publishError, setPublishError] = React.useState<string | null>(null);
+    // Relay endpoint, resolved at startup via getRelayWsUrl() (localStorage >
+    // VITE_RELAY_WS_URL > dev default) and editable at runtime through the
+    // relay panel. An empty field resets to that same resolution order.
+    const [relayUrl, setRelayUrl] = React.useState<string>(getRelayWsUrl());
     const [copied, setCopied] = React.useState(false);
     const [view, setView] = React.useState<ViewId>('direct');
     // The active direct-conversation peer and their real remote identity key, reported by
@@ -93,24 +91,28 @@ export default function App() {
             const id = await loadOrGenerateIdentity(gate);
             if (cancelled) return;
             setIdentity(id);
-
-            // Publish a prekey bundle to the relay so peers can reach us.
-            // A failure here surfaces a visible error — we do not silently
-            // leave the identity unpublished.
-            try {
-                const transport = new RelayTransport();
-                const session = await publishPrekeyForIdentity(id, transport);
-                if (cancelled) return;
-                setReceiverSession(session);
-            } catch (err) {
-                setPublishError(
-                    err instanceof Error ? err.message : 'Failed to publish prekey to relay',
-                );
-            }
+            // Prekey publishing (with retry/backoff + human status) is driven
+            // by useRelayConnection below, which starts once `identity` is set.
         })();
         return () => {
             cancelled = true;
         };
+    }, []);
+
+    // Retry-with-backoff prekey publish + Connecting/Connected/Unreachable
+    // status. The receiver session it produces on success is handed to
+    // Conversation's receive loop.
+    const conn = useRelayConnection(identity, relayUrl);
+
+    const handleRelayUrlChange = React.useCallback((url: string) => {
+        if (url === '') {
+            // Reset: clear the override and fall back to the default resolution.
+            localStorage.removeItem('relayWsUrl');
+            setRelayUrl(getRelayWsUrl());
+        } else {
+            localStorage.setItem('relayWsUrl', url);
+            setRelayUrl(url);
+        }
     }, []);
 
     const recipientId = identity?.recipientId ?? null;
@@ -156,11 +158,14 @@ export default function App() {
                                 </button>
                             </div>
                         )}
-                        {publishError && (
-                            <div className="rail-publish-error" role="alert">
-                                Prekey publish failed: {publishError}
-                            </div>
-                        )}
+                        <RelayConnectionPanel
+                            status={conn.status}
+                            error={conn.error}
+                            resolvedUrl={conn.resolvedUrl}
+                            relayUrl={relayUrl}
+                            onRelayUrlChange={handleRelayUrlChange}
+                            onRetry={conn.retry}
+                        />
                         <div className="rail-nav">
                             {NAV_ITEMS.map((item) => (
                                 <button
@@ -187,7 +192,7 @@ export default function App() {
                                 {view === 'direct' && (
                                     <Conversation
                                         identity={identity ?? undefined}
-                                        receiverSession={receiverSession ?? undefined}
+                                        receiverSession={conn.receiverSession ?? undefined}
                                         onRemoteIdentityKeyChange={handleRemoteIdentityKeyChange}
                                     />
                                 )}
