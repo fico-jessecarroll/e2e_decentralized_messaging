@@ -11,8 +11,8 @@
 //!  - At least one Result::Err crosses the WASM boundary as a structured error
 
 use core_bindings_wasm::{
-    establish_session_from_bundle, establish_with_malformed_prekey, generate_identity,
-    generate_prekey_bundle,
+    bundle_identity_key_bytes, establish_session_from_bundle, establish_with_malformed_prekey,
+    generate_identity, generate_prekey_bundle,
 };
 
 // ---------------------------------------------------------------------------
@@ -152,5 +152,98 @@ fn malformed_bundle_error_is_structured_wasm_error() {
     assert!(
         !err.message().is_empty(),
         "malformed-bundle error must carry a non-empty message"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// bundle_identity_key_bytes: extract the peer's identity key without
+// establishing a session (used by callers that need the remote key for
+// safety-number derivation, e.g. the web UI story wiring lookup_prekey to
+// SafetyNumberVerification).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bundle_identity_key_bytes_matches_the_bundle_owners_public_bytes() {
+    let bob = generate_identity();
+    let bundle_bytes = generate_prekey_bundle(&bob).expect("bundle generation must succeed");
+
+    let extracted =
+        bundle_identity_key_bytes(&bundle_bytes).expect("identity key extraction must succeed");
+
+    assert_eq!(
+        extracted,
+        bob.public_bytes(),
+        "extracted identity key bytes must match the bundle owner's public_bytes()"
+    );
+}
+
+#[test]
+fn bundle_identity_key_bytes_rejects_malformed_bytes() {
+    let result = bundle_identity_key_bytes(&[0u8; 3]);
+    let err = result.expect_err("malformed bundle bytes must surface as Err");
+    assert_eq!(
+        err.kind(),
+        "MalformedBundle",
+        "malformed bundle bytes must surface kind = MalformedBundle, got: {}",
+        err.kind()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Contract: a tampered signed-prekey signature is rejected with a distinct
+// kind = "PreKey" error (not the generic "Session" kind), so JS callers can
+// tell "the bundle's signature didn't verify" apart from other establishment
+// failures and surface a specific message to the user.
+//
+// The tamper flips a single byte inside the signed-prekey signature field
+// only, located by parsing the exact `bundle_to_bytes` wire layout (see
+// `core/crypto/src/session.rs`), so this test — unlike the existing
+// `tampered_prekey_bundle_rejected_as_err_not_panic` test, which flips a byte
+// at the bundle's midpoint and may corrupt any of several fields — proves
+// specifically that a signature failure (not e.g. a malformed identity key)
+// surfaces the "PreKey" kind.
+// ---------------------------------------------------------------------------
+
+fn read_u32_be(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
+}
+
+/// Byte range of the signed-prekey signature field within a `bundle_to_bytes`
+/// blob: registration_id(4) + device_id(4) + identity_key(4+len) +
+/// signed_pre_key_id(4) + signed_pre_key_pub(4+len) + signed_pre_key_sig(4+len).
+fn signed_prekey_signature_range(bundle_bytes: &[u8]) -> std::ops::Range<usize> {
+    let mut offset = 0usize;
+    offset += 4; // registration_id
+    offset += 4; // device_id
+    let identity_key_len = read_u32_be(bundle_bytes, offset) as usize;
+    offset += 4 + identity_key_len;
+    offset += 4; // signed_pre_key_id
+    let spk_pub_len = read_u32_be(bundle_bytes, offset) as usize;
+    offset += 4 + spk_pub_len;
+    let spk_sig_len = read_u32_be(bundle_bytes, offset) as usize;
+    offset += 4;
+    offset..offset + spk_sig_len
+}
+
+#[test]
+fn tampered_signed_prekey_signature_surfaces_prekey_kind() {
+    let bob = generate_identity();
+    let mut bundle_bytes = generate_prekey_bundle(&bob).expect("bundle generation must succeed");
+
+    let sig_range = signed_prekey_signature_range(&bundle_bytes);
+    assert!(
+        !sig_range.is_empty(),
+        "signed-prekey signature field must be non-empty"
+    );
+    bundle_bytes[sig_range.start] ^= 0xFF;
+
+    let alice = generate_identity();
+    let result = establish_session_from_bundle(&alice, &bundle_bytes);
+    let err = result.expect_err("tampered signed-prekey signature must be rejected");
+    assert_eq!(
+        err.kind(),
+        "PreKey",
+        "tampered signed-prekey signature must surface kind = PreKey, got: {}",
+        err.kind()
     );
 }

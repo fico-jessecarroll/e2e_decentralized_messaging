@@ -31,6 +31,12 @@ hkdf = "0.12"
 chacha20poly1305 = "0.10"
 zeroize = "1.9.0"
 
+# `std::time::SystemTime::now()` panics unconditionally on wasm32-unknown-unknown (no OS clock;
+# see crate::now()'s doc comment) — on that target we read wall-clock time via `Date.now()`
+# instead. Narrowly scoped to the wasm32 target only; not linked into native builds at all.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
 # The signed-prekey-fallback acceptance test drives the real async

@@ -33,7 +33,6 @@
 //! than trying to infer it from the ciphertext itself.
 
 use std::fmt;
-use std::time::SystemTime;
 
 use libsignal_protocol::{
     message_decrypt, message_encrypt, CiphertextMessage, IdentityKeyStore, KyberPreKeyStore,
@@ -265,7 +264,7 @@ pub async fn encrypt_message(
         local_address,
         session_store,
         identity_store,
-        SystemTime::now(),
+        crate::now(),
         &mut csprng,
     )
     .await

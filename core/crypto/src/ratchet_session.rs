@@ -157,6 +157,20 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+impl SessionError {
+    /// True if this error is specifically a rejected signed-prekey or Kyber-prekey signature
+    /// during PQXDH establishment (`process_prekey_bundle`'s `SignatureValidationFailed`).
+    /// Bindings (e.g. the WASM facade) use this to surface a distinct "the bundle's signature
+    /// didn't verify" error kind, separate from other establishment failures, without needing
+    /// `libsignal_protocol` as a direct dependency themselves.
+    pub fn is_prekey_signature_invalid(&self) -> bool {
+        matches!(
+            self,
+            SessionError::Establishment(SignalProtocolError::SignatureValidationFailed)
+        )
+    }
+}
+
 /// SHA-256 of `identity`'s serialized public identity key — a stable, 32-byte peer identifier.
 ///
 /// This is the transport-level peer id (the key the DHT / delivery layer addresses peers by) and
@@ -179,7 +193,7 @@ fn device() -> DeviceId {
 
 fn now_ts() -> Timestamp {
     Timestamp::from_epoch_millis(
-        std::time::SystemTime::now()
+        crate::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
@@ -224,10 +238,14 @@ impl DoubleRatchetSession {
         let mut store = InMemSignalProtocolStore::new(*identity, REGISTRATION_ID)
             .map_err(SessionError::PreKey)?;
 
-        let signed_prekey = generate_signed_pre_key(identity, SIGNED_PREKEY_ID, now_ts());
-        let kyber_prekey =
-            generate_kyber_prekey(KyberPreKeyId::from(KYBER_PREKEY_ID), identity.private_key())
-                .map_err(SessionError::PreKey)?;
+        let now = now_ts();
+        let signed_prekey = generate_signed_pre_key(identity, SIGNED_PREKEY_ID, now);
+        let kyber_prekey = generate_kyber_prekey(
+            KyberPreKeyId::from(KYBER_PREKEY_ID),
+            identity.private_key(),
+            now,
+        )
+        .map_err(SessionError::PreKey)?;
         let otpks = generate_one_time_pre_keys(ONE_TIME_PREKEY_ID, 1);
         let one_time_prekey = otpks
             .into_iter()

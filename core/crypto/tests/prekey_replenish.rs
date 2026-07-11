@@ -62,8 +62,12 @@ async fn session_establishment_succeeds_with_signed_prekey_fallback_when_no_one_
     // signed-prekey fallback path the story requires.
     let bob = crypto::generate_identity_key_pair();
     let signed = generate_signed_pre_key(&bob, 1, Timestamp::from_epoch_millis(0));
-    let kyber =
-        generate_kyber_prekey(KyberPreKeyId::from(1u32), bob.private_key()).expect("kyber prekey");
+    let kyber = generate_kyber_prekey(
+        KyberPreKeyId::from(1u32),
+        bob.private_key(),
+        Timestamp::from_epoch_millis(0),
+    )
+    .expect("kyber prekey");
     let bundle = build_prekey_bundle(
         REGISTRATION_ID,
         device_id(),

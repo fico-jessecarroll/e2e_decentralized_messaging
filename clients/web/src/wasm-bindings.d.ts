@@ -11,11 +11,39 @@
 declare module '*/core/bindings/wasm/pkg/index.js' {
   export class IdentityHandle {
     public_bytes(): Uint8Array;
+    private_bytes(): Uint8Array;
   }
 
   export class GroupHandle {}
 
+  // Opaque handle to an established PQXDH/Double Ratchet session. No methods
+  // are exposed to JS — see core/bindings/wasm/src/lib.rs's SessionHandle doc
+  // comment. Encrypt/decrypt are free functions that take a SessionHandle.
+  export class SessionHandle {}
+
+  // The WASM-boundary structured error — kind is a variant tag ("MalformedBundle",
+  // "PreKey", "Session", "NotMember", "Group", "SafetyNumber", ...), message is
+  // human-readable detail. Thrown (not returned) across the JS boundary by
+  // wasm-bindgen's Result<T, WasmError> -> throw convention.
+  export class WasmError {
+    readonly kind: string;
+    readonly message: string;
+  }
+
   export function generate_identity(): IdentityHandle;
+  export function identity_from_bytes(bytes: Uint8Array): IdentityHandle;
+
+  export function generate_prekey_bundle(identityHandle: IdentityHandle): Uint8Array;
+  export function create_receiver_session(identityHandle: IdentityHandle): SessionHandle;
+  export function publish_bundle_bytes(session: SessionHandle): Uint8Array;
+  export function establish_session_from_bundle(
+    identityHandle: IdentityHandle,
+    bundleBytes: Uint8Array,
+  ): SessionHandle;
+  export function bundle_identity_key_bytes(bundleBytes: Uint8Array): Uint8Array;
+  export function encrypt_message(session: SessionHandle, plaintext: Uint8Array): Uint8Array;
+  export function decrypt_message(session: SessionHandle, envelope: Uint8Array): Uint8Array;
+
   export function group_create(selfIdentity: IdentityHandle): GroupHandle;
   export function group_add_member(group: GroupHandle, publicBytes: Uint8Array): GroupHandle;
   export function group_remove_member(group: GroupHandle, publicBytes: Uint8Array): GroupHandle;
