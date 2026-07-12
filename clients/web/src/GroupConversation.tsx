@@ -3,6 +3,7 @@ import { generate_identity, derive_safety_number, group_create, group_add_member
 import { ensureWasmInit } from './wasm_init';
 import { SealGlyph } from './design/SealGlyph';
 import { StorageGate } from './storage';
+import { getStorageKey } from './storage_key';
 import { RelayTransport } from './relay_transport';
 import './GroupConversation.css';
 
@@ -116,6 +117,9 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
     const [group, setGroup] = useState<InstanceType<typeof GroupHandle> | null>(null);
     const [memberNames, setMemberNames] = useState<string[]>([]);
     const [realMembers, setRealMembers] = useState<RealMember[]>([]);
+    // Real peers that were removed from the group but kept visible so the
+    // user can re-add them (mirrors the demo-member Add/Remove toggle).
+    const [removedRealMembers, setRemovedRealMembers] = useState<RealMember[]>([]);
     const [messages, setMessages] = useState<GroupMessage[]>([]);
     const [input, setInput] = useState('');
     const [peerIdInput, setPeerIdInput] = useState('');
@@ -144,31 +148,36 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
                 // Load persisted group state (if any) so membership survives
                 // a page reload. The GroupHandle is not serializable, so we
                 // reconstruct it from the persisted member list.
+                if (!gateRef.current) {
+                    gateRef.current = new StorageGate({
+                        indexedDB: (globalThis as any).indexedDB,
+                        keyBytes: getStorageKey(),
+                    });
+                }
                 const gate = gateRef.current;
-                if (gate) {
-                    try {
-                        const persisted = (await gate.get(GROUP_STORE, GROUP_RECORD_ID)) as
-                            | PersistedGroupState
-                            | null;
-                        if (persisted?.members?.length) {
-                            const restoredGroup = group_create(self);
-                            const restored: RealMember[] = [];
-                            for (const m of persisted.members) {
-                                const pubBytes = new Uint8Array(m.publicBytes);
-                                const newGroup = group_add_member(restoredGroup, pubBytes);
-                                restored.push({ recipientId: m.recipientId, publicBytes: pubBytes });
-                                // Update the group handle for each member.
-                                // We can't call setGroup inside the loop (React
-                                // batches), so we build up the final handle.
-                                (restoredGroup as unknown as { members: Uint8Array[] }).members =
-                                    (newGroup as unknown as { members: Uint8Array[] }).members;
-                            }
-                            setGroup(restoredGroup);
-                            setRealMembers(restored);
+                try {
+                    await gate.open();
+                    const persisted = (await gate.get(GROUP_STORE, GROUP_RECORD_ID)) as
+                        | PersistedGroupState
+                        | null;
+                    if (persisted?.members?.length) {
+                        const restoredGroup = group_create(self);
+                        const restored: RealMember[] = [];
+                        for (const m of persisted.members) {
+                            const pubBytes = new Uint8Array(m.publicBytes);
+                            const newGroup = group_add_member(restoredGroup, pubBytes);
+                            restored.push({ recipientId: m.recipientId, publicBytes: pubBytes });
+                            // Update the group handle for each member.
+                            // We can't call setGroup inside the loop (React
+                            // batches), so we build up the final handle.
+                            (restoredGroup as unknown as { members: Uint8Array[] }).members =
+                                (newGroup as unknown as { members: Uint8Array[] }).members;
                         }
-                    } catch (e) {
-                        console.error('Failed to load persisted group state', e);
+                        setGroup(restoredGroup);
+                        setRealMembers(restored);
                     }
+                } catch (e) {
+                    console.error('Failed to load persisted group state', e);
                 }
 
                 loadedRef.current = true;
@@ -228,6 +237,19 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
         // Don't add the same recipient ID twice.
         if (realMembers.some((m) => m.recipientId === trimmedId)) return;
 
+        // If the peer was previously removed, re-add them using the known key
+        // (no new lookup needed) and clear them from the removed list.
+        const previouslyRemoved = removedRealMembers.find((m) => m.recipientId === trimmedId);
+        if (previouslyRemoved) {
+            setGroup(group_add_member(group, previouslyRemoved.publicBytes));
+            const updatedMembers = [...realMembers, previouslyRemoved];
+            setRealMembers(updatedMembers);
+            setRemovedRealMembers((prev) => prev.filter((m) => m.recipientId !== trimmedId));
+            setPeerIdInput('');
+            void persistGroupState(updatedMembers);
+            return;
+        }
+
         setAddingPeer(true);
         setPeerError(null);
         try {
@@ -279,6 +301,22 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
         setGroup(group_remove_member(group, member.publicBytes));
         const updatedMembers = realMembers.filter((m) => m.recipientId !== recipientId);
         setRealMembers(updatedMembers);
+        setRemovedRealMembers((prev) =>
+            prev.some((m) => m.recipientId === recipientId) ? prev : [...prev, member],
+        );
+        void persistGroupState(updatedMembers);
+    };
+
+    // Re-add a previously-removed real peer. The public key is already known
+    // (looked up when first added), so no new lookupPrekey call is needed.
+    const reAddPeer = (recipientId: string) => {
+        if (!group) return;
+        const member = removedRealMembers.find((m) => m.recipientId === recipientId);
+        if (!member) return;
+        setGroup(group_add_member(group, member.publicBytes));
+        const updatedMembers = [...realMembers, member];
+        setRealMembers(updatedMembers);
+        setRemovedRealMembers((prev) => prev.filter((m) => m.recipientId !== recipientId));
         void persistGroupState(updatedMembers);
     };
 
@@ -352,6 +390,39 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
                                 )}
                             </div>
                         ))}
+                        {realMembers.map((m) => (
+                            <div key={m.recipientId} data-testid={`member-${m.recipientId}`} className="member-chip in-group">
+                                <SealGlyph value={m.recipientId} size={20} tone="verified" title={`${m.recipientId}'s seal`} />
+                                <span className="member-chip-name">{m.recipientId}</span>
+                                <button onClick={() => removePeer(m.recipientId)} data-testid={`remove-peer-${m.recipientId}`}>
+                                    Remove
+                                </button>
+                            </div>
+                        ))}
+                        {removedRealMembers.map((m) => (
+                            <div key={m.recipientId} className="member-chip">
+                                <SealGlyph value={m.recipientId} size={20} tone="neutral" title={`${m.recipientId}'s seal`} />
+                                <span className="member-chip-name">{m.recipientId}</span>
+                                <button onClick={() => reAddPeer(m.recipientId)} data-testid={`add-peer-${m.recipientId}`}>
+                                    Add
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="group-peer-add">
+                        <input
+                            value={peerIdInput}
+                            onChange={(e) => setPeerIdInput(e.target.value)}
+                            placeholder="Recipient ID"
+                            data-testid="group-peer-id-input"
+                            className="group-input"
+                        />
+                        <button onClick={addPeer} disabled={addingPeer} data-testid="add-peer-button" className="group-add-peer">
+                            {addingPeer ? 'Adding…' : 'Add Peer'}
+                        </button>
+                        {peerError && (
+                            <div role="alert" className="group-peer-error">{peerError}</div>
+                        )}
                     </div>
                     <div data-testid="group-message-list" className="group-log">
                         {messages.length === 0 ? (

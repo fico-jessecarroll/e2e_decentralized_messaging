@@ -97,6 +97,11 @@ vi.mock('../../../core/bindings/wasm/pkg/index.js', () => {
 
     function derive_safety_number() { return '00000 00000 00000 00000'; }
 
+    // The real binding extracts the identity key from a prekey bundle. In
+    // these tests lookupPrekey returns the identity key bytes directly (no
+    // bundle envelope), so this is an identity passthrough.
+    function bundle_identity_key_bytes(bundle: Uint8Array) { return bundle; }
+
     return {
         generate_identity,
         group_create,
@@ -105,12 +110,17 @@ vi.mock('../../../core/bindings/wasm/pkg/index.js', () => {
         group_encrypt,
         group_decrypt,
         derive_safety_number,
+        bundle_identity_key_bytes,
         IdentityHandle,
         GroupHandle,
     };
 });
 
 vi.mock('../src/wasm_init', () => ({ ensureWasmInit: async () => {} }));
+
+vi.mock('../src/storage_key', () => ({
+    getStorageKey: () => new Uint8Array(32),
+}));
 
 // ── Storage mock ───────────────────────────────────────────────────────────
 //
@@ -130,6 +140,8 @@ vi.mock('../src/storage', () => {
             store.set(id, value);
         }
     }
+    // Expose the store so tests can reset it between runs.
+    (MockStorageGate as unknown as { __store: Map<string, unknown> }).__store = store;
     return { StorageGate: MockStorageGate };
 });
 
