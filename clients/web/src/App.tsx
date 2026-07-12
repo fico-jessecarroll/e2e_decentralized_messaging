@@ -8,7 +8,7 @@ import { DeviceLinking } from './DeviceLinking';
 import { ensureWasmInit } from './wasm_init';
 import { SealGlyph } from './design/SealGlyph';
 import { StorageGate } from './storage';
-import { getStorageKey } from './storage_key';
+import { getStorageKey, getStoragePassword } from './storage_key';
 import { loadOrGenerateIdentity, type PersistedIdentity } from './identity';
 import { getRelayWsUrl } from './relay_transport';
 import { useRelayConnection, RelayConnectionPanel } from './useRelayConnection';
@@ -204,7 +204,7 @@ export default function App() {
                                         )}
                                     </SafetyNumberErrorBoundary>
                                 )}
-                                {view === 'backup' && <BackupPanel storagePassword="default" />}
+                                {view === 'backup' && <BackupPanel storagePassword={getStoragePassword()} />}
                             </div>
                             {view === 'direct' && (
                                 <aside className="trust-drawer" aria-label="Conversation trust">

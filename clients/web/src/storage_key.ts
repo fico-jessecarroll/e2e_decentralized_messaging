@@ -58,27 +58,27 @@ function base64Decode(b64: string): Uint8Array {
  * the correct fail-closed behaviour — we never fall back to a weak or
  * constant key.
  */
+export function getStoragePassword(): string {
+    return base64Encode(getStorageKey());
+}
+
+/**
+ * Returns a 32-byte cryptographically random key, generating and persisting it on first call. Subsequent calls return the same key.
+ */
 export function getStorageKey(): Uint8Array {
-  // Try to reuse a persisted key.
-  try {
-    const stored = localStorage.getItem(STORAGE_ITEM);
-    if (stored) {
-      const key = base64Decode(stored);
-      if (key.length === KEY_LENGTH) return key;
-    }
-  } catch {
-    // localStorage unavailable — fall through to generate a fresh key.
-  }
+    // Try to reuse a persisted key.
+    try {
+        const stored = localStorage.getItem(STORAGE_ITEM);
+        if (stored) {
+            const key = base64Decode(stored);
+            if (key.length === KEY_LENGTH) return key;
+        }
+    } catch {}
 
-  // Generate a fresh cryptographically strong key.
-  const key = crypto.getRandomValues(new Uint8Array(KEY_LENGTH));
-
-  // Best-effort persist for reuse across reloads.
-  try {
-    localStorage.setItem(STORAGE_ITEM, base64Encode(key));
-  } catch {
-    // localStorage unavailable — key is session-scoped only.
-  }
-
-  return key;
+    // Generate a fresh cryptographically strong key.
+    const key = crypto.getRandomValues(new Uint8Array(KEY_LENGTH));
+    try {
+        localStorage.setItem(STORAGE_ITEM, base64Encode(key));
+    } catch {}
+    return key;
 }
