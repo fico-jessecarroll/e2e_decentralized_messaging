@@ -184,6 +184,7 @@ export function RelayConnectionPanel({
 }: RelayConnectionPanelProps) {
     const [inputValue, setInputValue] = useState(relayUrl);
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [warning, setWarning] = useState<string | null>(null);
     const [detailsOpen, setDetailsOpen] = useState(false);
 
     // Keep the field in sync when the resolved URL changes externally (e.g.
@@ -207,6 +208,14 @@ export function RelayConnectionPanel({
             return;
         }
         setValidationError(null);
+        const urlObj = (() => {
+            try { return new URL(trimmed); } catch { return null; }
+        })();
+        if (urlObj && urlObj.protocol === 'ws:' && !['localhost','127.0.0.1','::1'].includes(urlObj.hostname.toLowerCase())) {
+            setWarning('Unencrypted relay connection to non-localhost host may expose metadata');
+        } else {
+            setWarning(null);
+        }
         onRelayUrlChange(trimmed);
     };
 
@@ -276,6 +285,11 @@ export function RelayConnectionPanel({
             {validationError && (
                 <div className="rail-relay-validation" role="alert">
                     {validationError}
+                </div>
+            )}
+            {warning && (
+                <div className="rail-relay-warning" role="status">
+                    {warning}
                 </div>
             )}
             <div className="rail-relay-resolved" title="Resolved relay URL in use">
