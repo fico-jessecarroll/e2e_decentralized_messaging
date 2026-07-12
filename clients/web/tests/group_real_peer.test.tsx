@@ -145,6 +145,7 @@ vi.mock('../src/storage', () => {
     return { StorageGate: MockStorageGate };
 });
 
+import { StorageGate as MockStorageGate } from '../src/storage';
 import { GroupConversation } from '../src/GroupConversation';
 
 // ── Transport mock ──────────────────────────────────────────────────────────
@@ -176,6 +177,9 @@ beforeEach(() => {
     prekeyBundles = {};
     prekeyRejections = {};
     persistedGroupState = null;
+    // Clear the mock storage store so persisted group state from a previous
+    // test doesn't leak into the next (the store is module-level in the mock).
+    (MockStorageGate as unknown as { __store: Map<string, unknown> }).__store.clear();
 });
 
 // ── Tests ───────────────────────────────────────────────────────────────────
