@@ -208,8 +208,24 @@ export function RelayConnectionPanel({
             return;
         }
         setValidationError(null);
-        const urlObj = (() => {
-            try { return new URL(trimmed); } catch { return null; }
+        // Parse URL for advisory warning
+        let parsedUrl: URL | null = null;
+        if (trimmed !== '' && isValidRelayUrl(trimmed)) {
+            try {
+                parsedUrl = new URL(trimmed);
+            } catch {
+                /* should not happen due to validation */
+            }
+        }
+
+        // Determine warning: unencrypted ws:// to non-localhost host
+        if (parsedUrl && parsedUrl.protocol === 'ws:' && !['localhost', '127.0.0.1', '::1'].includes(parsedUrl.hostname.toLowerCase())) {
+            setWarning('Unencrypted relay connection: metadata and PoW traffic is visible to observers.');
+        } else {
+            setWarning(null);
+        }
+
+        onRelayUrlChange(trimmed);L(trimmed); } catch { return null; }
         })();
         if (urlObj && urlObj.protocol === 'ws:' && !['localhost','127.0.0.1','::1'].includes(urlObj.hostname.toLowerCase())) {
             setWarning('Unencrypted relay connection to non-localhost host may expose metadata');
