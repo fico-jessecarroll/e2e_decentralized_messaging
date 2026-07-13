@@ -96,6 +96,9 @@ jobs:
           cache: npm
           cache-dependency-path: clients/web/package-lock.json
       - run: npm ci
+      - name: npm audit high/critical
+        run: |
+          npm audit --audit-level=high --production
       - run: npm test
 
   web-artifact:
