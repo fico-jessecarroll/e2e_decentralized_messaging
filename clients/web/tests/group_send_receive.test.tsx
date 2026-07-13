@@ -285,9 +285,7 @@ describe('GroupConversation real send/receive with persistence', () => {
         );
 
         // Wait for the component to be ready.
-        await waitFor(() => {
-            expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
-        });
+        await flush(); expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
 
         // Create the group and add the peer.
         fireEvent.click(screen.getByTestId('create-group-button'));
@@ -361,17 +359,11 @@ describe('GroupConversation real send/receive with persistence', () => {
         );
 
         // The group and its members should be restored from persisted state.
-        await waitFor(() => {
-            expect(screen.getByTestId('member-list')).toBeInTheDocument();
-        });
-        await waitFor(() => {
-            expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
-        });
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
+        await flush(); expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
 
         // The message history should be restored from persisted storage.
-        await waitFor(() => {
-            expect(screen.getByText('persist me!')).toBeInTheDocument();
-        });
+        await flush(); expect(screen.getByText('persist me!')).toBeInTheDocument();
     });
 
     test('the receive-loop interval is cleaned up on unmount — no further pickup calls after unmount', async () => {
@@ -544,9 +536,8 @@ describe('GroupConversation real send/receive with persistence', () => {
         fireEvent.click(screen.getByTestId('group-send-button'));
 
         // The ciphertext should have been sent to the peer's recipient ID via sendEnvelope.
-        await waitFor(() => {
-            expect(transport.sendEnvelope).toHaveBeenCalledWith(peerRecipientId, expect.any(Uint8Array));
-        });
+        await flush();
+        expect(transport.sendEnvelope).toHaveBeenCalledWith(peerRecipientId, expect.any(Uint8Array));
 
         // Verify the sent ciphertext can be decrypted by the peer (real crypto round-trip).
         const sentCall = transport.sendEnvelope.mock.calls.find(

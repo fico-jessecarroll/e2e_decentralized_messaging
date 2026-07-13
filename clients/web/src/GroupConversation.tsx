@@ -309,6 +309,15 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
             try {
                 await ensureWasmInit();
 
+                // Check for the group handle BEFORE picking up. If the group
+                // hasn't been created yet (or is being restored from persisted
+                // state), we must not pick up envelopes — the relay's store-and-
+                // forward mailbox is destructive (pickup removes the envelope),
+                // so consuming an envelope we can't yet decrypt would lose it.
+                const currentGroup = groupRef.current;
+                const currentSelf = selfIdentityRef.current;
+                if (!currentGroup || !currentSelf) return;
+
                 const envelope: Uint8Array = await transportRef.current.pickupEnvelope(
                     selfRecipientId!,
                 );
@@ -320,11 +329,6 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
 
                 // Decrypt — fail closed. A tampered/corrupted envelope throws
                 // here; we surface a warning and never render any plaintext.
-                // We need the current group handle and self identity. If the
-                // group hasn't been created yet, we can't decrypt — skip.
-                const currentGroup = groupRef.current;
-                const currentSelf = selfIdentityRef.current;
-                if (!currentGroup || !currentSelf) return;
 
                 let plaintext: Uint8Array;
                 try {
