@@ -35,6 +35,13 @@ export function isValidRelayUrl(url: string): boolean {
     return /^wss?:\/\/.+/i.test(url.trim());
 }
 
+/** Clears the reload-warning flag WarningBanner reads, wherever a session is dropped or never held. */
+function clearSessionActiveFlag(): void {
+    if (typeof window !== 'undefined') {
+        localStorage.removeItem('session_active');
+    }
+}
+
 export interface UseRelayConnectionResult {
     status: RelayStatus;
     /** Raw technical error from the last failed attempt (for the details toggle). */
@@ -76,6 +83,7 @@ export function useRelayConnection(
         // decrypting with a session whose bundle was published to a different
         // (or now-unreachable) relay. It is repopulated on the next success.
         setReceiverSession(null);
+        clearSessionActiveFlag();
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
         let transport: RelayTransport | null = null;
@@ -101,6 +109,12 @@ export function useRelayConnection(
                 const session = await publishPrekeyForIdentity(identity, transport);
                 if (cancelled) return;
                 setReceiverSession(session);
+                // Persist a flag so WarningBanner can warn that reloading loses
+                // this session; cleared by clearSessionActiveFlag() wherever the
+                // session is dropped (effect re-entry, unreachable, unmount).
+                if (typeof window !== 'undefined') {
+                    localStorage.setItem('session_active', 'true');
+                }
                 setStatus('connected');
                 setError(null);
                 return;
@@ -112,6 +126,7 @@ export function useRelayConnection(
                     scheduleNext(INITIAL_BACKOFF_MS[attemptIdx - 1] ?? PERIODIC_RETRY_MS);
                 } else {
                     setStatus('unreachable');
+                    clearSessionActiveFlag();
                     scheduleNext(PERIODIC_RETRY_MS);
                 }
             }
@@ -121,6 +136,7 @@ export function useRelayConnection(
 
         return () => {
             cancelled = true;
+            clearSessionActiveFlag();
             if (timer) clearTimeout(timer);
             if (transport) {
                 try {

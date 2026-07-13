@@ -80,6 +80,13 @@ resolution order.
 React app consuming the shared Rust core via WASM bindings (`core/bindings/wasm`).
 See PLAN.md §5 for the documented reduced threat model on web (no secure enclave).
 
+## Session persistence
+
+The web client does not currently persist the cryptographic session across page
+reloads. If you have an active conversation and reload the page, the session
+will be lost and messages may fail to decrypt. A banner warns you of this while
+a session is active — please save any unsent messages before reloading.
+
 ## Encrypted storage API
 
 Two IndexedDB-backed encrypted storage modules are exported from `src/index.ts`:
