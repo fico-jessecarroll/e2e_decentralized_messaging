@@ -50,6 +50,10 @@ export interface GroupMessage {
     // the UI (and tests) show/assert who could and could not decrypt each
     // message, including members who were removed before it was sent.
     decryptResults: Record<string, GroupMessageResult>;
+    // True for messages sent by the local user; false for received messages
+    // decrypted from the relay. Omitted/undefined for backward compat with
+    // persisted messages from before this field existed.
+    sentByMe?: boolean;
 }
 
 /**
@@ -61,6 +65,14 @@ export interface GroupMessage {
  */
 export interface GroupTransport {
     lookupPrekey(recipientId: string): Promise<Uint8Array>;
+    sendEnvelope(recipientId: string, envelope: Uint8Array): Promise<void>;
+    /**
+     * Pick up a stored envelope addressed to `recipientId` (the local user's own
+     * recipient ID). Returns the raw envelope bytes. Rejects with an error whose
+     * message is "NotFound" or "Expired" when the mailbox is empty — the receive
+     * loop treats these as a normal empty poll, not an exceptional condition.
+     */
+    pickupEnvelope(recipientId: string): Promise<Uint8Array>;
 }
 
 export interface GroupConversationProps {
@@ -72,6 +84,19 @@ export interface GroupConversationProps {
      * Tests inject a mock to simulate persistence across reloads.
      */
     storageGate?: StorageGate;
+    /**
+     * The local persisted identity. When provided, the component uses this
+     * identity (instead of generating a demo one) for group_create,
+     * group_encrypt, and group_decrypt — enabling real send/receive over the
+     * relay. The `selfRecipientId` must also be provided.
+     */
+    identity?: InstanceType<typeof IdentityHandle>;
+    /**
+     * The local user's own recipient ID (base64 of their public key). Required
+     * when `identity` is provided — the receive loop polls the relay for
+     * envelopes addressed to this ID.
+     */
+    selfRecipientId?: string;
 }
 
 interface DemoMember {
@@ -105,10 +130,14 @@ interface PersistedGroupState {
 const DEMO_MEMBER_NAMES = ['Alice', 'Bob', 'Eve'] as const;
 const GROUP_STORE = 'session' as const;
 const GROUP_RECORD_ID = 'group-state';
+const GROUP_MESSAGES_STORE = 'messages' as const;
+const GROUP_MESSAGES_ID = 'group-messages';
 
 export const GroupConversation: React.FC<GroupConversationProps> = ({
     transport,
     storageGate,
+    identity: identityProp,
+    selfRecipientId,
 }) => {
     const [ready, setReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -125,19 +154,40 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
     const [peerIdInput, setPeerIdInput] = useState('');
     const [addingPeer, setAddingPeer] = useState(false);
     const [peerError, setPeerError] = useState<string | null>(null);
+    const [decryptionWarning, setDecryptionWarning] = useState<string>('');
 
     const transportRef = useRef<GroupTransport>(transport ?? new RelayTransport());
     const gateRef = useRef<StorageGate | undefined>(storageGate);
     // Track whether we've attempted to load persisted state so we don't
     // overwrite it with an empty group on the first render.
     const loadedRef = useRef(false);
+    // Track whether persisted messages have been loaded (separate from group
+    // state loading because messages have their own store/record).
+    const messagesLoadedRef = useRef(false);
+    // Dedup set for picked-up envelopes (base64 of envelope bytes) — prevents
+    // the relay returning the same envelope on consecutive polls from creating
+    // duplicate messages. Mirrors Conversation.tsx's receive-loop dedup.
+    const seenEnvelopesRef = useRef<Set<string>>(new Set());
+    // In-flight guard: prevents overlapping polls when I/O is slow. Mirrors
+    // Conversation.tsx's pollInFlightRef pattern.
+    const pollInFlightRef = useRef(false);
+    // Mirror group/selfIdentity state into refs so the receive-loop effect
+    // (which depends on [identityProp, selfRecipientId], not [group]) always
+    // reads the latest values without re-subscribing the interval on every
+    // group change.
+    const groupRef = useRef<InstanceType<typeof GroupHandle> | null>(null);
+    const selfIdentityRef = useRef<InstanceType<typeof IdentityHandle> | null>(null);
+    useEffect(() => { groupRef.current = group; }, [group]);
+    useEffect(() => { selfIdentityRef.current = selfIdentity; }, [selfIdentity]);
 
     useEffect(() => {
         let cancelled = false;
         ensureWasmInit()
             .then(async () => {
                 if (cancelled) return;
-                const self = generate_identity();
+                // Use the externally-provided identity (real send/receive path)
+                // or generate a demo identity (legacy demo-member path).
+                const self = identityProp ?? generate_identity();
                 const demoMembers: DemoMember[] = DEMO_MEMBER_NAMES.map((name) => {
                     const identity = generate_identity();
                     return { name, identity, publicBytes: identity.public_bytes() };
@@ -180,6 +230,20 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
                     console.error('Failed to load persisted group state', e);
                 }
 
+                // Load persisted group messages (if any) so history survives
+                // a page reload — matching Conversation.tsx's message persistence.
+                try {
+                    const persistedMsgs = (await gate.get(GROUP_MESSAGES_STORE, GROUP_MESSAGES_ID)) as
+                        | GroupMessage[]
+                        | null;
+                    if (persistedMsgs && persistedMsgs.length) {
+                        setMessages(persistedMsgs);
+                    }
+                } catch (e) {
+                    console.error('Failed to load persisted group messages', e);
+                }
+                messagesLoadedRef.current = true;
+
                 loadedRef.current = true;
                 setReady(true);
             })
@@ -209,6 +273,115 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
             console.error('Failed to persist group state', e);
         }
     };
+
+    // Persist group messages whenever they change — matching Conversation.tsx's
+    // message persistence pattern. Skipped until the initial load completes so
+    // we don't overwrite persisted history with an empty array on mount.
+    useEffect(() => {
+        if (!messagesLoadedRef.current) return;
+        const gate = gateRef.current;
+        if (!gate) return;
+        gate.open()
+            .then(() => gate.put(GROUP_MESSAGES_STORE, GROUP_MESSAGES_ID, messages))
+            .catch((e) => console.error('Failed to persist group messages', e));
+    }, [messages]);
+
+    // ── Receive loop ───────────────────────────────────────────────────────
+    // Poll the relay for inbound group envelopes addressed to the local user
+    // (by their own recipient ID) on a fixed interval while the component is
+    // mounted. On a successful pickup, decrypt with group_decrypt and append
+    // the plaintext to the message history. NotFound/Expired (empty mailbox)
+    // are normal, not errors. A decrypt failure (tampered ciphertext, AEAD
+    // auth failure) fails closed: no plaintext is rendered and a visible
+    // role='alert' warning is surfaced — mirroring Conversation.tsx's
+    // receive-loop fail-closed pattern.
+    useEffect(() => {
+        if (!identityProp || !selfRecipientId) return;
+
+        let cancelled = false;
+        let timer: ReturnType<typeof setInterval> | null = null;
+        const POLL_INTERVAL_MS = 5000;
+
+        async function pollOnce() {
+            if (cancelled) return;
+            if (pollInFlightRef.current) return; // skip overlapping poll
+            pollInFlightRef.current = true;
+            try {
+                await ensureWasmInit();
+
+                // Check for the group handle BEFORE picking up. If the group
+                // hasn't been created yet (or is being restored from persisted
+                // state), we must not pick up envelopes — the relay's store-and-
+                // forward mailbox is destructive (pickup removes the envelope),
+                // so consuming an envelope we can't yet decrypt would lose it.
+                const currentGroup = groupRef.current;
+                const currentSelf = selfIdentityRef.current;
+                if (!currentGroup || !currentSelf) return;
+
+                const envelope: Uint8Array = await transportRef.current.pickupEnvelope(
+                    selfRecipientId!,
+                );
+
+                // Dedup: the relay may return the same envelope on consecutive polls.
+                const envelopeKey = Buffer.from(envelope).toString('base64');
+                if (seenEnvelopesRef.current.has(envelopeKey)) return;
+                seenEnvelopesRef.current.add(envelopeKey);
+
+                // Decrypt — fail closed. A tampered/corrupted envelope throws
+                // here; we surface a warning and never render any plaintext.
+
+                let plaintext: Uint8Array;
+                try {
+                    plaintext = group_decrypt(currentGroup, currentSelf, envelope);
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    console.warn('group_decrypt failed for picked-up envelope', { error: msg });
+                    setDecryptionWarning(
+                        'A received group message could not be verified and was discarded. ' +
+                        'This may indicate a tampered or corrupted message.',
+                    );
+                    return;
+                }
+
+                // Success: clear any prior warning and append the decrypted message.
+                setDecryptionWarning('');
+                const body = new TextDecoder().decode(plaintext);
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        id: Math.random().toString(36).slice(2),
+                        plaintext: body,
+                        timestamp: Date.now(),
+                        decryptResults: {},
+                        sentByMe: false,
+                    },
+                ]);
+            } catch (e) {
+                // NotFound / Expired = empty mailbox, a normal condition. Do not
+                // log, do not show a warning, do not crash.
+                const msg = e instanceof Error ? e.message : String(e);
+                if (msg === 'NotFound' || msg === 'Expired') return;
+                // Unexpected transport errors: log at warn level (not error — the
+                // loop retries on the next interval) but do not crash the UI.
+                console.warn('pickup_envelope poll failed', { error: msg });
+            } finally {
+                pollInFlightRef.current = false;
+            }
+        }
+
+        timer = setInterval(() => {
+            void pollOnce();
+        }, POLL_INTERVAL_MS);
+
+        // Also fire one immediate poll so we don't wait a full interval on mount.
+        void pollOnce();
+
+        return () => {
+            cancelled = true;
+            if (timer) clearInterval(timer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [identityProp, selfRecipientId]);
 
     const createGroup = () => {
         if (!selfIdentity) return;
@@ -330,6 +503,20 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
             setError(e instanceof Error ? e.message : String(e));
             return;
         }
+        // Deliver the ciphertext to every real group member via sendEnvelope
+        // over the relay, addressed by each member's recipient ID — mirroring
+        // Conversation.tsx's send path. Demo members are local-only (no relay
+        // address) so they are not sent over the wire.
+        for (const member of realMembers) {
+            void transportRef.current
+                .sendEnvelope(member.recipientId, new Uint8Array(ciphertext))
+                .catch((e) => {
+                    console.warn('sendEnvelope failed for group member', {
+                        recipientId: member.recipientId,
+                        error: e instanceof Error ? e.message : String(e),
+                    });
+                });
+        }
         // Every known demo member (whether currently in the group or removed)
         // attempts to decrypt, surfacing the real per-member outcome from the
         // actual crypto - including a removed member's decrypt genuinely
@@ -353,6 +540,7 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
                 plaintext: input,
                 timestamp: Date.now(),
                 decryptResults,
+                sentByMe: true,
             },
         ]);
         setInput('');
@@ -458,6 +646,9 @@ export const GroupConversation: React.FC<GroupConversationProps> = ({
                             Send
                         </button>
                     </div>
+                    {decryptionWarning && (
+                        <p className="group-warning" role="alert">{decryptionWarning}</p>
+                    )}
                 </>
             )}
         </div>

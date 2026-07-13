@@ -159,6 +159,13 @@ function makeTransport() {
             if (!bundle) throw new Error('relay: recipient not found');
             return bundle;
         }),
+        // These tests don't exercise send/receive, but GroupTransport now
+        // requires them — provide no-op stubs so the mock satisfies the
+        // interface.
+        sendEnvelope: vi.fn(async (_recipientId: string, _envelope: Uint8Array): Promise<void> => {}),
+        pickupEnvelope: vi.fn(async (_recipientId: string): Promise<Uint8Array> => {
+            throw new Error('NotFound');
+        }),
     };
 }
 
