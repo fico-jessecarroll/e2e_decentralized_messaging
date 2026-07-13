@@ -77,6 +77,18 @@ URLs. No relay URL is baked into the prebuilt artifact, so the same zip works
 against any relay; see "Configuring the relay endpoint" below for the full
 resolution order.
 
+## Security Headers for Production Hosting
+
+When deploying the static bundle to a web server or CDN, add the following security headers (the exact syntax depends on your host):
+
+- **X‑Content-Type‑Options: nosniff** – prevents MIME‑type sniffing.
+- **Referrer‑Policy: no-referrer** – removes referrer information from requests.
+- **X‑Frame‑Options: DENY** (or `SAMEORIGIN` if you need framing in the same origin) – protects against click‑jacking.
+- **Strict‑Transport‑Security: max-age=31536000; includeSubDomains** – forces HTTPS.
+- **Content‑Security‑Policy** – already set via a meta tag, but you can also enforce it as an HTTP header for stricter control.
+
+These headers complement the CSP meta tag and provide additional protection when the client is served from a production environment.
+
 React app consuming the shared Rust core via WASM bindings (`core/bindings/wasm`).
 See PLAN.md §5 for the documented reduced threat model on web (no secure enclave).
 
