@@ -27,7 +27,28 @@
 
 import '@testing-library/jest-dom';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
+
+// ── Microtask flush helper ─────────────────────────────────────────────────
+//
+// With vi.useFakeTimers, `waitFor` hangs because its internal polling uses
+// setTimeout which never fires under fake timers. Instead, we flush pending
+// microtasks + timer callbacks with a zero-time advance, which resolves the
+// component's async init (ensureWasmInit is mocked to a resolved promise)
+// and any state updates that follow. This mirrors the pattern used in
+// conversation_receive.test.tsx (act + advanceTimersByTimeAsync).
+async function flush() {
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+    });
+}
+
+/** Advance fake timers by ms and flush microtasks, wrapped in act. */
+async function tick(ms: number) {
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+    });
+}
 
 // ── Mutable fixtures ───────────────────────────────────────────────────────
 //
@@ -270,12 +291,12 @@ describe('GroupConversation real send/receive with persistence', () => {
 
         // Create the group and add the peer.
         fireEvent.click(screen.getByTestId('create-group-button'));
-        await waitFor(() => expect(screen.getByTestId('member-list')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
 
         // Add the peer by recipient ID.
         fireEvent.change(screen.getByTestId('group-peer-id-input'), { target: { value: peerRecipientId } });
         fireEvent.click(screen.getByTestId('add-peer-button'));
-        await waitFor(() => expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
 
         // ── The receive loop should pick up the envelope and decrypt it ─────
         // Advance timers to trigger at least one poll.
@@ -316,12 +337,12 @@ describe('GroupConversation real send/receive with persistence', () => {
                 selfRecipientId={selfRecipientId}
             />,
         );
-        await waitFor(() => expect(screen.getByTestId('group-conversation')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
         fireEvent.click(screen.getByTestId('create-group-button'));
-        await waitFor(() => expect(screen.getByTestId('member-list')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
         fireEvent.change(screen.getByTestId('group-peer-id-input'), { target: { value: peerRecipientId } });
         fireEvent.click(screen.getByTestId('add-peer-button'));
-        await waitFor(() => expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
 
         // Receive the message.
         await act(async () => {
@@ -366,9 +387,9 @@ describe('GroupConversation real send/receive with persistence', () => {
                 selfRecipientId={selfRecipientId}
             />,
         );
-        await waitFor(() => expect(screen.getByTestId('group-conversation')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
         fireEvent.click(screen.getByTestId('create-group-button'));
-        await waitFor(() => expect(screen.getByTestId('member-list')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
 
         // Let one poll happen.
         await act(async () => {
@@ -420,12 +441,12 @@ describe('GroupConversation real send/receive with persistence', () => {
                 selfRecipientId={selfRecipientId}
             />,
         );
-        await waitFor(() => expect(screen.getByTestId('group-conversation')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
         fireEvent.click(screen.getByTestId('create-group-button'));
-        await waitFor(() => expect(screen.getByTestId('member-list')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
         fireEvent.change(screen.getByTestId('group-peer-id-input'), { target: { value: peerRecipientId } });
         fireEvent.click(screen.getByTestId('add-peer-button'));
-        await waitFor(() => expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
 
         // Advance timers to trigger a poll.
         await act(async () => {
@@ -466,12 +487,12 @@ describe('GroupConversation real send/receive with persistence', () => {
                 selfRecipientId={selfRecipientId}
             />,
         );
-        await waitFor(() => expect(screen.getByTestId('group-conversation')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
         fireEvent.click(screen.getByTestId('create-group-button'));
-        await waitFor(() => expect(screen.getByTestId('member-list')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
         fireEvent.change(screen.getByTestId('group-peer-id-input'), { target: { value: peerRecipientId } });
         fireEvent.click(screen.getByTestId('add-peer-button'));
-        await waitFor(() => expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
 
         // Rapidly advance timers in small increments to simulate many quick polls.
         for (let i = 0; i < 10; i++) {
@@ -509,14 +530,14 @@ describe('GroupConversation real send/receive with persistence', () => {
                 selfRecipientId={selfRecipientId}
             />,
         );
-        await waitFor(() => expect(screen.getByTestId('group-conversation')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('group-conversation')).toBeInTheDocument();
         fireEvent.click(screen.getByTestId('create-group-button'));
-        await waitFor(() => expect(screen.getByTestId('member-list')).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId('member-list')).toBeInTheDocument();
 
         // Add the peer.
         fireEvent.change(screen.getByTestId('group-peer-id-input'), { target: { value: peerRecipientId } });
         fireEvent.click(screen.getByTestId('add-peer-button'));
-        await waitFor(() => expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument());
+        await flush(); expect(screen.getByTestId(`member-${peerRecipientId}`)).toBeInTheDocument();
 
         // Type and send a message.
         fireEvent.change(screen.getByTestId('group-message-input'), { target: { value: 'outgoing group msg' } });
