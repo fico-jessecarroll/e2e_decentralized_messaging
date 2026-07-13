@@ -220,18 +220,11 @@ export function RelayConnectionPanel({
 
         // Determine warning: unencrypted ws:// to non-localhost host
         if (parsedUrl && parsedUrl.protocol === 'ws:' && !['localhost', '127.0.0.1', '::1'].includes(parsedUrl.hostname.toLowerCase())) {
-            setWarning('Unencrypted relay connection: metadata and PoW traffic is visible to observers.');
-        } else {
-            setWarning(null);
-        }
-
-        onRelayUrlChange(trimmed);L(trimmed); } catch { return null; }
-        })();
-        if (urlObj && urlObj.protocol === 'ws:' && !['localhost','127.0.0.1','::1'].includes(urlObj.hostname.toLowerCase())) {
             setWarning('Unencrypted relay connection to non-localhost host may expose metadata');
         } else {
             setWarning(null);
         }
+
         onRelayUrlChange(trimmed);
     };
 
