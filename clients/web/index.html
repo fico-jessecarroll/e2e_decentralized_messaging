@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8" />
     <title>Web Client</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+<!--
+  The connect-src directive allows WebSocket connections to any host.
+  This is required because the relay URL is user-configurable at runtime.
+-->
     <script type="module" src="./src/main.tsx"></script>
 </head>
 <body>
