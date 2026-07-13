@@ -89,6 +89,16 @@ When deploying the static bundle to a web server or CDN, add the following secur
 
 These headers complement the CSP meta tag and provide additional protection when the client is served from a production environment.
 
+## Limitations
+
+- Identity and messages are stored locally in the browser profile's IndexedDB; they are **not shared across different profiles, devices, or browsers**.
+- The web client does **not automatically sync** between multiple devices. Clearing site data (or using a new profile/device) removes the identity and all local message history.
+- If you need to preserve your identity when switching browsers/devices, export a backup via the **Backup** tab in the left rail.
+  - Export: downloads an encrypted file that contains all stored keys and messages.
+  - Import: uploads the file and restores the data atomically.
+  - This is the only supported recovery path for lost local storage.
+- For more context on the reduced threat model and how it affects multi-device usage, see [PLAN.md §5](../PLAN.md) (the same link-rather-than-restate convention used in `docs/two-machine-testing.md`).
+
 React app consuming the shared Rust core via WASM bindings (`core/bindings/wasm`).
 See PLAN.md §5 for the documented reduced threat model on web (no secure enclave).
 
